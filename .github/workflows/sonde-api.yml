@@ -8,13 +8,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/relief-masque }
+        with: { ref: claude/course-soleil }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
         env: { GH_PAGES_BASE: /diagnostic-site/ }
       - run: npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium && sudo apt-get install -y -qq poppler-utils >/dev/null
-      - name: Relief
+      - name: Course
         shell: bash
         run: |
           set +e
@@ -25,22 +25,32 @@ jobs:
           (async () => {
             const b = await pw.chromium.launch();
             const log=(...a)=>console.log(...a);
-            for (const [nom, adr, theme] of [['grenoble','place grenette grenoble','light'],['marseille','2 rue jean 13004 marseille','light'],['chamonix','place du triangle de l amitie chamonix','dark']]) {
-              const c = await b.newContext({ viewport:{width:1000,height:900}, colorScheme: theme }); const p = await c.newPage();
-              p.on('console', m => { if (m.type()==='error') log('console', m.text().slice(0,200)); });
-              await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
-              await p.fill('#search-input', adr);
-              await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
-              await p.keyboard.press('Enter');
-              const body = p.locator('#module-body-soleil');
-              await p.waitForFunction(() => document.querySelector('#module-body-soleil canvas[data-chart=masque]'), null, {timeout:240000}).catch(e=>log('attente', e.message.split('\n')[0]));
-              await p.click('#module-body-soleil >> xpath=.. >> .module-toggle').catch(()=>{});
-              await p.evaluate(() => { const d = document.querySelector('#module-body-soleil'); d.hidden = false; d.closest('.module-card').classList.remove('collapsed'); d.querySelector('details')?.setAttribute('open',''); });
-              await p.waitForTimeout(800);
-              log(nom, (await body.innerText()).slice(0, 1200)); const ch = p.locator('#module-body-soleil canvas[data-chart=masque]'); await ch.scrollIntoViewIfNeeded(); await p.waitForTimeout(800); await ch.screenshot({ path:`shots/${nom}-masque.jpg`, quality:75 }).catch(e=>log('capture', e.message.split('\n')[0]));
-              
-              await c.close();
-            }
+            const c = await b.newContext({ viewport:{width:1200,height:820} }); const p = await c.newPage();
+            p.on('pageerror', e => log('pageerror', e.message.slice(0,300)));
+            await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
+            await p.fill('#search-input', '2 rue jean 13004 marseille');
+            await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
+            await p.keyboard.press('Enter');
+            await p.waitForSelector('.map-atelier:not([hidden])', {timeout:60000});
+            await p.click('.map-atelier');
+            await p.waitForFunction(()=>/périmètre/.test(document.querySelector('.at-site')?.textContent||''), null, {timeout:60000});
+            await p.click('[data-couche="course"] .switch');
+            await p.click('[data-couche="cadastre"] .switch');
+            log('panneau soleil visible', await p.isVisible('.at-soleil'));
+            await p.click('.at-replier');
+            await p.evaluate(() => { const i = document.querySelector('.m3d-hour'); i.value = '10'; i.dispatchEvent(new Event('input')); });
+            await p.click('.at-mode button[data-mode="3d"]');
+            await p.waitForTimeout(3000);
+            const vue = async (nom, zoom, pitch, bearing) => {
+              await p.evaluate(([z, pt, br]) => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: z, pitch: pt, bearing: br }); }, [zoom, pitch, bearing]);
+              await p.waitForTimeout(6000);
+              log(nom, await p.innerText('.m3d-sun-info').catch(()=>'-'));
+              await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
+            };
+            await vue('course-3d', 16.4, 60, -20);
+            await p.click('.at-mode button[data-mode="2d"]');
+            await p.waitForTimeout(1500);
+            await vue('course-plan', 16.4, 0, 0);
             await b.close();
           })();
           JS

@@ -1,38 +1,66 @@
-// Rendu écran du module Vent : indicateurs annuels + 4 roses saisonnières.
-import { Chart } from "chart.js/auto";
-import type { ChartConfiguration } from "chart.js";
-import { SECTOR_LABELS, SEASONS, SEASON_LABELS, type VentResult } from "./compute";
-import { roseConfig } from "./charts";
+// Rendu écran du module Vent : indicateurs, lecture en une phrase, roses
+// normées hiver / été côte à côte, puis printemps, automne et année.
+import { SECTOR_LABELS, SECTOR_NOMS, FORT_MS, RAFALE_MS, type SeasonRose, type VentResult } from "./compute";
+import { echelleRose, legendeClasses, maxSecteur, roseSvg } from "./charts";
 
-function indicator(label: string, value: string): string {
-  return `<div class="indicator"><span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
+const fr = (v: number, d = 1) => v.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+const kmh = (ms: number) => Math.round(ms * 3.6);
+
+function indicator(label: string, value: string, sous = ""): string {
+  // L'indicateur s'affiche en ordre inverse (libellé, valeur, précision).
+  return `<div class="indicator">${sous ? `<span class="ind-sous">${sous}</span>` : ""}<span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
+}
+
+/** Une heure sur N, pour les parts lisibles (« 1 heure sur 8 »). */
+function uneSur(pct: number): string {
+  if (pct <= 0.05) return "presque jamais";
+  if (pct >= 50) return `${fr(pct, 0)} % du temps`;
+  return `1 heure sur ${Math.round(100 / pct)}`;
+}
+
+function phraseSaison(nom: string, r: SeasonRose): string {
+  const dom = SECTOR_NOMS[r.dominantSector];
+  let p = `${nom}, le vent vient surtout du ${dom} (${fr(r.frequency[r.dominantSector], 0)} % des heures ventées)`;
+  if (r.fortPct >= 0.5 && r.fortSecteur >= 0) {
+    p += `, fort ${uneSur(r.fortPct)}`;
+    if (r.fortSecteur !== r.dominantSector) p += `, alors surtout du ${SECTOR_NOMS[r.fortSecteur]}`;
+  } else p += ", rarement fort";
+  return p + ".";
 }
 
 export function renderVent(el: HTMLElement, r: VentResult): void {
-  const dominantLabel = SECTOR_LABELS[r.annual.dominantSector];
+  const a = r.annual;
+  const roses = [r.bySeason.hiver, r.bySeason.ete, r.bySeason.printemps, r.bySeason.automne, a];
+  const { pas, rmax } = echelleRose(maxSecteur(roses));
 
   el.innerHTML = `
     <div class="indicators">
-      ${indicator("Direction dominante", dominantLabel)}
-      ${indicator("Vitesse moyenne", `${r.annual.meanSpeedOverall} m/s`)}
-      ${indicator("Calme (< 0,5 m/s)", `${r.annual.calmPct} %`)}
+      ${indicator("Direction dominante", SECTOR_LABELS[a.dominantSector], `vent du ${SECTOR_NOMS[a.dominantSector]}`)}
+      ${indicator("Vitesse moyenne", `${fr(a.meanSpeedOverall)} m/s`, `${kmh(a.meanSpeedOverall)} km/h, hors calme`)}
+      ${indicator(`Vent fort (≥ ${kmh(FORT_MS)} km/h)`, `${fr(a.fortPct)} %`, a.fortSecteur >= 0 ? `des heures, surtout du ${SECTOR_LABELS[a.fortSecteur]}` : "des heures")}
+      ${r.joursRafales != null ? indicator(`Rafales ≥ ${kmh(RAFALE_MS)} km/h`, `${fr(r.joursRafales, 0)} j/an`, "modélisées, voir note") : ""}
+      ${indicator("Calme (< 0,5 m/s)", `${fr(a.calmPct)} %`)}
     </div>
-    <div class="rose-grid">
-      ${SEASONS.map((s) => `<div class="chart-box rose-box"><canvas data-chart="rose-${s}"></canvas></div>`).join("")}
+    <p class="vent-lecture">${phraseSaison("En hiver", r.bySeason.hiver)} ${phraseSaison("En été", r.bySeason.ete)}</p>
+    <div class="rose-duo">
+      ${roseSvg(r.bySeason.hiver, "Hiver · déc. à fév.", rmax, pas)}
+      ${roseSvg(r.bySeason.ete, "Été · juin à août", rmax, pas)}
     </div>
-    <p class="module-note">Roses calculées sur ${r.years} ans de données horaires
-    (réanalyse ERA5, fenêtre récente — voir méthodologie dans l'export).
-    16 secteurs de 22,5°. La couleur indique la vitesse moyenne du secteur,
-    pas un empilement de classes de vitesse (approximation, pas une rose
-    météorologique normée).</p>
+    ${legendeClasses()}
+    <details class="rose-plus">
+      <summary>Printemps, automne et année</summary>
+      <div class="rose-trio">
+        ${roseSvg(r.bySeason.printemps, "Printemps", rmax, pas, 220)}
+        ${roseSvg(r.bySeason.automne, "Automne", rmax, pas, 220)}
+        ${roseSvg(a, "Année", rmax, pas, 220)}
+      </div>
+    </details>
+    <p class="module-note">Roses normées : chaque pétale montre la part des heures où le vent
+    vient de cette direction, découpée par classe de vitesse ; les pétales et le calme
+    totalisent 100 %. Toutes les roses ont la même échelle. Vent horaire à 10 m sur
+    ${r.years} ans (réanalyse ERA5, maille d'environ 30 km) : c'est le vent régional, sans
+    les accélérations dues aux rues et aux bâtiments. Les rafales d'ERA5 sont calculées
+    par le modèle, et souvent plus faibles que celles mesurées en station
+    (Météo-France compte les jours où une rafale atteint 58 km/h).</p>
   `;
-
-  for (const s of SEASONS) {
-    mountChart(el, `rose-${s}`, roseConfig(r.bySeason[s], SEASON_LABELS[s]));
-  }
-}
-
-function mountChart(el: HTMLElement, key: string, config: ChartConfiguration): void {
-  const canvas = el.querySelector<HTMLCanvasElement>(`canvas[data-chart="${key}"]`);
-  if (canvas) new Chart(canvas, config);
 }

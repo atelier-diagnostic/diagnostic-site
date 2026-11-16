@@ -35,6 +35,9 @@ jobs:
             await p.click('.map-atelier');
             await p.waitForFunction(()=>/périmètre/.test(document.querySelector('.at-site')?.textContent||''), null, {timeout:60000});
             await p.click('[data-couche="ensoleillement"] .switch');
+            await p.waitForTimeout(500);
+            log('panneau', await p.isVisible('.at-soleil'), await p.isVisible('.m3d-presets button[data-md="03-21"]'));
+            await p.click('.at-replier');
             for (const [md, nom] of [['03-21','sol-mars'],['12-21','sol-dec']]) {
               const t0 = Date.now();
               await p.click(`.m3d-presets button[data-md="${md}"]`);

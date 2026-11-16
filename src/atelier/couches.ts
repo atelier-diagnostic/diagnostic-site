@@ -111,6 +111,15 @@ export const COUCHES: CoucheDef[] = [
     note: "Bâtiments et arbres, sol plat, toits plats, relief non pris en compte. Ombre des arbres indicative quand leur taille n'est pas renseignée. La lumière de la carte suit le soleil.",
   },
   {
+    id: "course",
+    famille: "Soleil",
+    titre: "Course du soleil",
+    source: "Calcul astronomique",
+    active: false,
+    opacite: 1,
+    note: "Arcs du 21 juin (orange), des équinoxes (gris) et du 21 décembre (bleu), points aux heures pleines (heure légale) ; en noir, le jour choisi et le soleil à l'heure choisie. Voûte du rayon du périmètre (40 à 400 m). Vue de dessus, c'est un diagramme solaire en plan.",
+  },
+  {
     id: "zonage",
     famille: "Urbanisme",
     titre: "Zonage du PLU",

@@ -13,6 +13,7 @@ import { fetchBuildingsWithHeight, BUILDING_SOURCE_LABEL, type BuildingsResult }
 import { bboxAroundMeters } from "../core/geo";
 import type { SiteContext } from "../core/types";
 import { fetchTrees } from "../modules/soleil/fetch";
+import { creerCoucheCourseSoleil } from "./course-soleil";
 import { DEFAULT_HEIGHT_M, MAX_SHADOW_M, type ShadowBuilding } from "../map3d/shadows";
 import type { ShadowRequest, ShadowResponse } from "../map3d/shadow-worker";
 import { sunAtLegalTime, formatHour } from "../map3d/sun";
@@ -316,10 +317,14 @@ export function createAtelier(root: HTMLElement): Atelier {
   map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 140 }), "bottom-right");
   // Arbres en volume (three.js), sous le carroyage et le périmètre.
   const coucheArbres = creerCoucheArbres3D("arbres-3d");
+  const coucheCourse = creerCoucheCourseSoleil("course-3d");
+  coucheCourse.setPlan(true); // l'atelier s'ouvre en 2D
   const pret = new Promise<void>((r) =>
     map.once("load", () => {
       map.addLayer(coucheArbres, "carroyage");
       map.setLayoutProperty("arbres-3d", "visibility", "none");
+      map.addLayer(coucheCourse, "carroyage");
+      map.setLayoutProperty("course-3d", "visibility", "none");
       r();
     }),
   );
@@ -331,6 +336,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "bati") return ["bati-2d", "bati-3d"];
     if (id === "arbres") return ["arbres", "arbres-3d"];
     if (id === "repere") return [];
+    if (id === "course") return ["course-3d"];
     return [id];
   }
   function appliquer(id: string): void {
@@ -354,6 +360,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       const prop = PROP[layer.type];
       if (prop) map.setPaintProperty(lid, prop, e.opacite);
       if (lid === "arbres-3d") coucheArbres.setOpacite(e.opacite);
+      if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
     }
     if (id === "repere" && marker) {
@@ -370,8 +377,9 @@ export function createAtelier(root: HTMLElement): Atelier {
       }
     }
     if (id === "ombres" && !e.actif) eclairer(null);
-    if (id === "ombres") {
-      soleilPanel.hidden = !e.actif;
+    if (id === "ombres" || id === "course") {
+      // Le panneau date / heure sert aux ombres et à la course du soleil.
+      soleilPanel.hidden = !(etat.get("ombres")!.actif || etat.get("course")!.actif);
       if (e.actif) demanderOmbres();
     }
   }
@@ -471,6 +479,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   root.querySelectorAll<HTMLButtonElement>(".at-mode button").forEach((b) =>
     b.addEventListener("click", () => {
       mode3d = b.dataset.mode === "3d";
+      coucheCourse.setPlan(!mode3d);
       root.querySelectorAll(".at-mode button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       map.easeTo({ pitch: mode3d ? 55 : 0, bearing: mode3d ? -20 : 0, duration: 600 });
       appliquer("bati");
@@ -497,6 +506,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (!site) return null;
     const h = Number(hourInput.value);
     const sun = sunAtLegalTime(site.lat, site.lon, dateInput.value || today(), h);
+    coucheCourse.setMoment(dateInput.value || today(), h);
     const tz = sun.utcOffset === 2 ? "heure d'été" : "heure d'hiver";
     const nuit = sun.elevationDeg <= 0.5;
     const l10 = nuit ? 0 : Math.min(10 / Math.tan((sun.elevationDeg * Math.PI) / 180), MAX_SHADOW_M);
@@ -679,6 +689,8 @@ export function createAtelier(root: HTMLElement): Atelier {
       type: "FeatureCollection",
       features: ctx.radiusM !== null ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: cercle(ctx.lat, ctx.lon, ctx.radiusM) } }] : [],
     });
+    coucheCourse.setSite(ctx.lat, ctx.lon, ctx.radiusM ?? 150);
+    coucheCourse.setMoment(dateInput.value || today(), Number(hourInput.value));
     marker?.remove();
     marker = new maplibregl.Marker({ element: repere() }).setLngLat([ctx.lon, ctx.lat]).addTo(map);
     appliquer("repere");

@@ -111,6 +111,15 @@ export const COUCHES: CoucheDef[] = [
     note: "Bâtiments et arbres, sol plat, toits plats, relief non pris en compte. Ombre des arbres indicative quand leur taille n'est pas renseignée. La lumière de la carte suit le soleil.",
   },
   {
+    id: "ensoleillement",
+    famille: "Soleil",
+    titre: "Heures de soleil au sol",
+    source: "Calcul à partir des hauteurs BD TOPO®",
+    active: false,
+    opacite: 0.75,
+    note: "Durée d'ensoleillement du sol libre sur la journée choisie dans le panneau Soleil (ciel clair, pas de 15 min, cellules de 2 m). Ombres des bâtiments du périmètre seulement : arbres, relief et bâtiments hors périmètre ignorés ; toits exclus.",
+  },
+  {
     id: "course",
     famille: "Soleil",
     titre: "Course du soleil",
@@ -199,3 +208,13 @@ export const USAGES: { valeur: string; color: string }[] = [
 ];
 export const USAGE_AUTRE = "#b8b8bd";
 export const NEUTRE = "#e6e2da";
+
+/** Heures de soleil au sol : rampe chaude, du sombre (peu de soleil) au clair (beaucoup). */
+export const CLASSES_SOLEIL = [
+  { max: 1, couleur: "#4a2f45", label: "< 1 h" },
+  { max: 2, couleur: "#7b3f4a", label: "1–2 h" },
+  { max: 4, couleur: "#b5543f", label: "2–4 h" },
+  { max: 6, couleur: "#e07f3a", label: "4–6 h" },
+  { max: 8, couleur: "#f2b35a", label: "6–8 h" },
+  { max: Infinity, couleur: "#fbe3a0", label: "≥ 8 h" },
+];

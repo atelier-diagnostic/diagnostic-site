@@ -3,12 +3,14 @@
 // demande ne porte ensuite que la position du soleil.
 
 import { computeShadows, type ShadowBuilding, type ShadowResult } from "./shadows";
+import { calculerEnsoleillement, type CarteEnsoleillement, type PasSoleil } from "./ensoleillement";
 
 export type ShadowRequest =
   | { kind: "buildings"; buildings: ShadowBuilding[]; lat0: number; lon0: number }
-  | { kind: "compute"; id: number; elevationDeg: number; azimuthDeg: number };
+  | { kind: "compute"; id: number; elevationDeg: number; azimuthDeg: number }
+  | { kind: "cumul"; id: number; rayonM: number; pas: PasSoleil[] };
 
-export type ShadowResponse = { id: number; result: ShadowResult };
+export type ShadowResponse = { id: number; result: ShadowResult } | { id: number; cumul: CarteEnsoleillement };
 
 let state: { buildings: ShadowBuilding[]; lat0: number; lon0: number } | null = null;
 
@@ -19,6 +21,11 @@ self.onmessage = (e: MessageEvent<ShadowRequest>) => {
     return;
   }
   if (!state) return;
+  if (msg.kind === "cumul") {
+    const cumul = calculerEnsoleillement(state.buildings, state.lat0, state.lon0, msg.rayonM, msg.pas);
+    (self as unknown as Worker).postMessage({ id: msg.id, cumul } satisfies ShadowResponse, [cumul.heures.buffer]);
+    return;
+  }
   const result = computeShadows(state.buildings, state.lat0, state.lon0, msg.elevationDeg, msg.azimuthDeg);
   (self as unknown as Worker).postMessage({ id: msg.id, result } satisfies ShadowResponse);
 };

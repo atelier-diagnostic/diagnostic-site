@@ -14,12 +14,14 @@ import { bboxAroundMeters } from "../core/geo";
 import type { SiteContext } from "../core/types";
 import { fetchTrees } from "../modules/soleil/fetch";
 import { creerCoucheCourseSoleil } from "./course-soleil";
+import type { CarteEnsoleillement, PasSoleil } from "../map3d/ensoleillement";
 import { DEFAULT_HEIGHT_M, MAX_SHADOW_M, type ShadowBuilding } from "../map3d/shadows";
 import type { ShadowRequest, ShadowResponse } from "../map3d/shadow-worker";
 import { sunAtLegalTime, formatHour } from "../map3d/sun";
 import {
   COUCHES, FAMILLES, FONDS, HAUTEURS, INCONNU, USAGES, USAGE_AUTRE, NEUTRE, COSIA, PAS_CARROYAGE, tuilesCosia,
   type CoucheDef, type Fond, type MillesimeCosia,
+  CLASSES_SOLEIL,
 } from "./couches";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
@@ -164,7 +166,9 @@ export function createAtelier(root: HTMLElement): Atelier {
             </div>
             <div class="at-legende" data-legende-bati></div>
             <p class="at-note" data-bati-source></p>`
-          : "";
+          : c.id === "ensoleillement"
+            ? `<div class="at-legende">${CLASSES_SOLEIL.map((k) => `<span><i style="background:${k.couleur}"></i>${k.label}</span>`).join("")}</div>`
+            : "";
     return `<div class="at-couche${e.actif ? " on" : ""}" data-couche="${c.id}">
       <label class="at-ligne">
         <span class="at-titre">${esc(c.titre)}<span class="at-source">${esc(c.source)}</span></span>
@@ -276,6 +280,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         { id: "vegetation", type: "fill", source: "vegetation", layout: { visibility: "none" }, paint: { "fill-color": "#5f9e4b", "fill-opacity": 0.5 } },
         { id: "ombres", type: "fill", source: "ombres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.4 } },
         { id: "ombres-arbres", type: "fill", source: "ombres-arbres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.32 } },
+        // Heures de soleil au sol : image calculée, ajoutée au premier calcul (voir afficherEnsoleillement).
         raster(COUCHES.find((c) => c.id === "cadastre")!),
         { id: "bati-2d", type: "fill", source: "bati", paint: { "fill-color": NEUTRE, "fill-opacity": 1, "fill-outline-color": "rgba(60,60,60,0.45)" } },
         {
@@ -337,6 +342,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "arbres") return ["arbres", "arbres-3d"];
     if (id === "repere") return [];
     if (id === "course") return ["course-3d"];
+    if (id === "ensoleillement") return ["ensoleillement"];
     return [id];
   }
   function appliquer(id: string): void {
@@ -379,8 +385,12 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "ombres" && !e.actif) eclairer(null);
     if (id === "ombres" || id === "course") {
       // Le panneau date / heure sert aux ombres et à la course du soleil.
-      soleilPanel.hidden = !(etat.get("ombres")!.actif || etat.get("course")!.actif);
+      soleilPanel.hidden = !(etat.get("ombres")!.actif || etat.get("course")!.actif || etat.get("ensoleillement")!.actif);
       if (e.actif) demanderOmbres();
+    }
+    if (id === "ensoleillement") {
+      soleilPanel.hidden = !(etat.get("ombres")!.actif || etat.get("course")!.actif || e.actif);
+      if (e.actif) void chargerCouche("bati").then(demanderCumul);
     }
   }
   function compter(): void {
@@ -577,6 +587,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     worker.postMessage({ kind: "compute", id: ++demande, elevationDeg: sun.elevationDeg, azimuthDeg: sun.azimuthDeg } satisfies ShadowRequest);
   }
   worker.onmessage = (e: MessageEvent<ShadowResponse>) => {
+    if (!("result" in e.data)) return;
     enCours = false;
     if (e.data.id === demande) {
       (map.getSource("ombres") as maplibregl.GeoJSONSource).setData({
@@ -590,12 +601,75 @@ export function createAtelier(root: HTMLElement): Atelier {
       demanderOmbres();
     }
   };
+  // --- Heures de soleil au sol (second worker : le curseur d'heure reste fluide) ---
+  const workerCumul = new Worker(new URL("../map3d/shadow-worker.ts", import.meta.url), { type: "module" });
+  let demandeCumul = 0;
+  let minuterieCumul = 0;
+  function demanderCumul(): void {
+    if (!site || !batimentsEnvoyes || !etat.get("ensoleillement")!.actif) return;
+    clearTimeout(minuterieCumul);
+    minuterieCumul = window.setTimeout(() => {
+      if (!site) return;
+      const jour = dateInput.value || today();
+      const pas: PasSoleil[] = [];
+      for (let h = 3; h <= 23; h += 0.25) {
+        const s = sunAtLegalTime(site.lat, site.lon, jour, h + 0.125);
+        if (s.elevationDeg > 0.5) pas.push({ azimuthDeg: s.azimuthDeg, elevationDeg: s.elevationDeg, dureeH: 0.25 });
+      }
+      etatCouche("ensoleillement", "Calcul…");
+      workerCumul.postMessage({ kind: "cumul", id: ++demandeCumul, rayonM: Math.min(site.radiusM ?? 150, 500), pas } satisfies ShadowRequest);
+    }, 250);
+  }
+  workerCumul.onmessage = (e: MessageEvent<ShadowResponse>) => {
+    if (!("cumul" in e.data) || e.data.id !== demandeCumul || !site) return;
+    afficherEnsoleillement(e.data.cumul, site);
+  };
+  function afficherEnsoleillement(c: CarteEnsoleillement, ctx: SiteContext): void {
+    const toile = document.createElement("canvas");
+    toile.width = c.nx;
+    toile.height = c.ny;
+    const g = toile.getContext("2d")!;
+    const img = g.createImageData(c.nx, c.ny);
+    const rgb = CLASSES_SOLEIL.map((k) => [1, 3, 5].map((o) => parseInt(k.couleur.slice(o, o + 2), 16)));
+    let libre = 0, moins2 = 0, plus2 = 0;
+    for (let i = 0; i < c.heures.length; i++) {
+      const h = c.heures[i];
+      if (Number.isNaN(h)) continue;
+      libre++;
+      if (h < 2) moins2++;
+      else plus2++;
+      const k = CLASSES_SOLEIL.findIndex((cl) => h < cl.max);
+      const [r, v, b] = rgb[k < 0 ? rgb.length - 1 : k];
+      img.data.set([r, v, b, 255], i * 4);
+    }
+    g.putImageData(img, 0, 0);
+    const mLon = 111_320 * Math.cos((ctx.lat * Math.PI) / 180);
+    const coin = (x: number, y: number): [number, number] => [ctx.lon + x / mLon, ctx.lat + y / 110_540];
+    const d = c.demiCote;
+    const coords: [[number, number], [number, number], [number, number], [number, number]] = [coin(-d, d), coin(d, d), coin(d, -d), coin(-d, -d)];
+    const src = map.getSource("ensoleillement") as maplibregl.ImageSource | undefined;
+    if (src) src.updateImage({ url: toile.toDataURL(), coordinates: coords });
+    else {
+      map.addSource("ensoleillement", { type: "image", url: toile.toDataURL(), coordinates: coords });
+      map.addLayer({ id: "ensoleillement", type: "raster", source: "ensoleillement", paint: { "raster-opacity": etat.get("ensoleillement")!.opacite, "raster-resampling": "nearest", "raster-fade-duration": 0 } }, "cadastre");
+      appliquer("ensoleillement");
+    }
+    const jour = new Date(`${dateInput.value || today()}T12:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+    const pct = (n: number) => (libre ? Math.round((n / libre) * 100) : 0);
+    etatCouche(
+      "ensoleillement",
+      `Le ${jour} (jour de ${c.jourH.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h) : ${pct(plus2)} % du sol libre du périmètre reçoit au moins 2 h de soleil, ${pct(moins2)} % moins de 2 h. Repère : le guide britannique BRE 209 vise au moins 2 h de soleil le 21 mars sur la moitié d'un espace extérieur.`,
+    );
+  }
+
   hourInput.addEventListener("input", demanderOmbres);
   dateInput.addEventListener("change", demanderOmbres);
+  dateInput.addEventListener("change", demanderCumul);
   root.querySelectorAll<HTMLButtonElement>(".m3d-presets button").forEach((b) =>
     b.addEventListener("click", () => {
       dateInput.value = `${(dateInput.value || today()).slice(0, 4)}-${b.dataset.md}`;
       demanderOmbres();
+      demanderCumul();
     }),
   );
 
@@ -630,8 +704,10 @@ export function createAtelier(root: HTMLElement): Atelier {
         if (data.source === "indisponible") charge.delete(id);
         const sb: ShadowBuilding[] = data.buildings.map((b) => ({ ring: b.polygon.map((p) => [p.lon, p.lat] as [number, number]), heightM: b.heightM }));
         worker.postMessage({ kind: "buildings", buildings: sb, lat0: ctx.lat, lon0: ctx.lon } satisfies ShadowRequest);
+        workerCumul.postMessage({ kind: "buildings", buildings: sb, lat0: ctx.lat, lon0: ctx.lon } satisfies ShadowRequest);
         batimentsEnvoyes = true;
         demanderOmbres();
+        demanderCumul();
       } else if (id === "ombres") {
         await chargerCouche("bati");
         demanderOmbres();
@@ -703,6 +779,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     charge.clear();
     batimentsEnvoyes = false;
     for (const id of ["bati", "arbres", "vegetation", "ombres"]) if (etat.get(id)!.actif) void chargerCouche(id);
+    if (etat.get("ensoleillement")!.actif) void chargerCouche("bati");
   }
 
   void pret.then(() => {

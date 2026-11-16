@@ -38,11 +38,11 @@ jobs:
             await p.waitForTimeout(500);
             log('panneau', await p.isVisible('.at-soleil'), await p.isVisible('.m3d-presets button[data-md="03-21"]'));
             await p.click('.at-replier');
-            for (const [md, nom] of [['03-21','sol-mars'],['12-21','sol-dec']]) {
+            for (const [md, nom] of [['03-20','sol-mars'],['12-21','sol-dec']]) {
               const t0 = Date.now();
               await p.click(`.m3d-presets button[data-md="${md}"]`);
               await p.waitForFunction(() => /sol libre/.test(document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
-              await p.waitForFunction((m) => (document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||'').includes(m), md==='03-21'?'mars':'décembre', {timeout:90000}).catch(()=>{});
+              await p.waitForFunction((m) => (document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||'').includes(m), md==='03-20'?'mars':'décembre', {timeout:90000}).catch(()=>{});
               log(nom, Date.now()-t0, 'ms', await p.innerText('[data-couche="ensoleillement"] .at-etat'));
               await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: 16.6 }); });
               await p.waitForTimeout(3000);

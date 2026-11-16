@@ -8,13 +8,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/vent-rose }
+        with: { ref: claude/relief-masque }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
         env: { GH_PAGES_BASE: /diagnostic-site/ }
       - run: npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium && sudo apt-get install -y -qq poppler-utils >/dev/null
-      - name: Vent
+      - name: Relief
         shell: bash
         run: |
           set +e
@@ -25,20 +25,20 @@ jobs:
           (async () => {
             const b = await pw.chromium.launch();
             const log=(...a)=>console.log(...a);
-            for (const [nom, adr, theme] of [['arles','65 route de crau 13200 arles','light'],['rennes','place de la mairie rennes','dark']]) {
+            for (const [nom, adr, theme] of [['grenoble','place grenette grenoble','light'],['marseille','2 rue jean 13004 marseille','light'],['chamonix','place du triangle de l amitie chamonix','dark']]) {
               const c = await b.newContext({ viewport:{width:1000,height:900}, colorScheme: theme }); const p = await c.newPage();
               p.on('console', m => { if (m.type()==='error') log('console', m.text().slice(0,200)); });
               await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
               await p.fill('#search-input', adr);
               await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
               await p.keyboard.press('Enter');
-              const body = p.locator('#module-body-vent');
-              await p.waitForFunction(() => document.querySelector('#module-body-vent .rose svg'), null, {timeout:240000}).catch(e=>log('attente', e.message.split('\n')[0]));
-              await p.click('#module-body-vent >> xpath=.. >> .module-toggle').catch(()=>{});
-              await p.evaluate(() => { const d = document.querySelector('#module-body-vent'); d.hidden = false; d.closest('.module-card').classList.remove('collapsed'); d.querySelector('details')?.setAttribute('open',''); });
+              const body = p.locator('#module-body-soleil');
+              await p.waitForFunction(() => document.querySelector('#module-body-soleil canvas[data-chart=masque]'), null, {timeout:240000}).catch(e=>log('attente', e.message.split('\n')[0]));
+              await p.click('#module-body-soleil >> xpath=.. >> .module-toggle').catch(()=>{});
+              await p.evaluate(() => { const d = document.querySelector('#module-body-soleil'); d.hidden = false; d.closest('.module-card').classList.remove('collapsed'); d.querySelector('details')?.setAttribute('open',''); });
               await p.waitForTimeout(800);
-              log(nom, (await body.innerText()).slice(0, 1500));
-              await body.screenshot({ path:`shots/${nom}.jpg`, quality:75 }).catch(e=>log('capture', e.message.split('\n')[0]));
+              log(nom, (await body.innerText()).slice(0, 1200)); const ch = p.locator('#module-body-soleil canvas[data-chart=masque]'); await ch.scrollIntoViewIfNeeded(); await p.waitForTimeout(800); await ch.screenshot({ path:`shots/${nom}-masque.jpg`, quality:75 }).catch(e=>log('capture', e.message.split('\n')[0]));
+              
               await c.close();
             }
             await b.close();

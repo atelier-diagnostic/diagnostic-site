@@ -47,8 +47,14 @@ export interface SoleilResult {
   heightSource: "bdtopo" | "osm" | "indisponible";
   buildingCount: number;
   heightCoveragePct: number;
-  /** Élévation du masque (degrés) par secteur de 10°, 36 valeurs. */
+  /** Élévation du masque total (bâti et relief, degrés) par secteur de 10°, 36 valeurs. */
   horizonMaskDeg: number[];
+  /** Masque des seuls bâtiments (36 valeurs). */
+  batiMaskDeg: number[];
+  /** Masque du seul relief (36 valeurs), null si le relief n'a pas pu être lu. */
+  reliefMaskDeg: number[] | null;
+  /** Détail du relief : altitude du site, point le plus masquant, perte d'ensoleillement due au relief seul (%). */
+  relief: { z0: number; plusHaut: { azimut: number; distance: number; angle: number }; pertePct: number } | null;
   sunPaths: SunPath[];
   monthlyTheoreticalHours: number[];
   monthlyMaskedHours: number[];
@@ -165,10 +171,24 @@ export function svfLabel(svf: number): string {
   return "Rue canyon (fortement encaissé)";
 }
 
+/** Relief par secteur de 10° : le plus haut des échantillons à 5° qu'il contient. */
+function reliefParSecteur(horizon5: number[]): number[] {
+  return Array.from({ length: SECTORS }, (_, k) => Math.max(horizon5[2 * k] ?? 0, horizon5[2 * k + 1] ?? 0));
+}
+
 export function computeSoleil(raw: SoleilRaw, ctx: SiteContext): SoleilResult {
-  const { mask, coveragePct } = computeHorizonMask(ctx, raw.buildings);
+  const { mask: batiMask, coveragePct } = computeHorizonMask(ctx, raw.buildings);
+  const reliefMask = raw.relief ? reliefParSecteur(raw.relief.horizonDeg) : null;
+  const mask = reliefMask ? batiMask.map((v, i) => Math.max(v, reliefMask[i])) : batiMask;
   const sunPaths = computeSunPaths(ctx.lat);
   const { monthlyTheoretical, monthlyMasked } = computeSunshineHours(ctx.lat, mask);
+  let relief: SoleilResult["relief"] = null;
+  if (raw.relief && reliefMask) {
+    const seul = computeSunshineHours(ctx.lat, reliefMask);
+    const t = monthlyTheoretical.reduce((a, b) => a + b, 0);
+    const m = seul.monthlyMasked.reduce((a, b) => a + b, 0);
+    relief = { z0: raw.relief.z0, plusHaut: raw.relief.plusHaut, pertePct: t > 0 ? Math.round((1 - m / t) * 1000) / 10 : 0 };
+  }
 
   const annualTheoretical = Math.round(monthlyTheoretical.reduce((a, b) => a + b, 0) * 30.4);
   const annualMasked = Math.round(monthlyMasked.reduce((a, b) => a + b, 0) * 30.4);
@@ -183,6 +203,9 @@ export function computeSoleil(raw: SoleilRaw, ctx: SiteContext): SoleilResult {
     buildingCount: raw.buildings.length,
     heightCoveragePct: coveragePct,
     horizonMaskDeg: mask,
+    batiMaskDeg: batiMask,
+    reliefMaskDeg: reliefMask,
+    relief,
     sunPaths,
     monthlyTheoreticalHours: monthlyTheoretical,
     monthlyMaskedHours: monthlyMasked,

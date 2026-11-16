@@ -13,6 +13,16 @@ function indicator(label: string, value: string): string {
   return `<div class="indicator"><span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
 }
 
+const DIRS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"];
+export function reliefTexte(r: SoleilResult): string {
+  if (!r.relief) return "non disponible";
+  const p = r.relief.plusHaut;
+  if (p.angle < 1) return "horizon dégagé";
+  const dir = DIRS[Math.round(p.azimut / 22.5) % 16];
+  const dist = p.distance >= 1000 ? `${(p.distance / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} km` : `${p.distance} m`;
+  return `jusqu'à ${p.angle.toLocaleString("fr-FR")}° (${dir}, à ${dist}), −${r.relief.pertePct.toLocaleString("fr-FR")} % de soleil`;
+}
+
 function legacyHeliodonLink(ctx: SiteContext): string {
   // Base = page courante : accepte une URL absolue ou un chemin relatif.
   const url = new URL(LEGACY_HELIODON_URL, window.location.href);
@@ -40,6 +50,7 @@ export function renderSoleil(el: HTMLElement, r: SoleilResult, ctx: SiteContext)
       ${indicator("Couverture données hauteur", `${r.heightCoveragePct} %`)}
       ${indicator("Heures de soleil possibles / an (ciel clair)", `${r.annualMaskedHours} h`)}
       ${indicator("Perte due aux masques", `${r.maskLossPct} %`)}
+      ${indicator("Masque du relief", reliefTexte(r))}
       ${indicator("Facteur de vue du ciel (SVF)", `${r.svf} — ${svfLabel(r.svf)}`)}
       ${indicator("Rayon analysé", `${r.effectiveRadiusM} m`)}
     </div>
@@ -81,11 +92,16 @@ export function renderSoleil(el: HTMLElement, r: SoleilResult, ctx: SiteContext)
     d'entre eux (hypothèse de ${DEFAULT_HEIGHT_M} m appliquée aux autres). Masque
     échantillonné aux sommets des bâtiments en secteurs de 10° : approximation,
     pas une silhouette exacte. Durée d'ensoleillement calculée sur le 15 de
-    chaque mois (jour représentatif) et ne tient compte que des masques bâtis
+    chaque mois (jour représentatif), avec les masques du bâti et du relief
     — la nébulosité réelle est dans le module Climat (rayonnement), à lire en
-    complément. SVF (facteur de vue du ciel) calculé avec la formule d'Oke à
-    partir du même masque bâti : c'est une valeur au point du site, pas une
-    carte, et elle ne tient pas compte du relief ni de la végétation. Potentiel
+    complément. ${r.relief
+      ? `Relief : altitudes du RGE ALTI® de l'IGN lues dans 72 directions jusqu'à 30 km, vues
+    à 1,5 m au-dessus du sol du site (${r.relief.z0} m), courbure de la Terre et réfraction comprises ;
+    le relief ne contient ni bâtiments ni arbres.`
+      : "Relief non pris en compte : le service altimétrique de l'IGN n'a pas répondu, ou le site est hors couverture."}
+    SVF (facteur de vue du ciel) calculé avec la formule d'Oke à partir du
+    masque total : c'est une valeur au point du site, pas une carte, et elle ne
+    tient pas compte de la végétation. Potentiel
     PV : système fictif de 3 kWc, orientation/inclinaison optimales, pertes
     système 14 % (hypothèses PVGIS standard) — à ajuster à un projet réel.</p>
   `;

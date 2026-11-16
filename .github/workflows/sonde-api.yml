@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/course-soleil }
+        with: { ref: claude/ensoleillement-sol }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -34,23 +34,17 @@ jobs:
             await p.waitForSelector('.map-atelier:not([hidden])', {timeout:60000});
             await p.click('.map-atelier');
             await p.waitForFunction(()=>/périmètre/.test(document.querySelector('.at-site')?.textContent||''), null, {timeout:60000});
-            await p.click('[data-couche="course"] .switch');
-            await p.click('[data-couche="cadastre"] .switch');
-            log('panneau soleil visible', await p.isVisible('.at-soleil'));
-            await p.click('.at-replier');
-            await p.evaluate(() => { const i = document.querySelector('.m3d-hour'); i.value = '10'; i.dispatchEvent(new Event('input')); });
-            await p.click('.at-mode button[data-mode="3d"]');
-            await p.waitForTimeout(3000);
-            const vue = async (nom, zoom, pitch, bearing) => {
-              await p.evaluate(([z, pt, br]) => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: z, pitch: pt, bearing: br }); }, [zoom, pitch, bearing]);
-              await p.waitForTimeout(6000);
-              log(nom, await p.innerText('.m3d-sun-info').catch(()=>'-'));
+            await p.click('[data-couche="ensoleillement"] .switch');
+            for (const [md, nom] of [['03-21','sol-mars'],['12-21','sol-dec']]) {
+              const t0 = Date.now();
+              await p.click(`.m3d-presets button[data-md="${md}"]`);
+              await p.waitForFunction(() => /sol libre/.test(document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
+              await p.waitForFunction((m) => (document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||'').includes(m), md==='03-21'?'mars':'décembre', {timeout:90000}).catch(()=>{});
+              log(nom, Date.now()-t0, 'ms', await p.innerText('[data-couche="ensoleillement"] .at-etat'));
+              await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: 16.6 }); });
+              await p.waitForTimeout(3000);
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
-            };
-            await vue('course-3d', 16.4, 60, -20);
-            await p.click('.at-mode button[data-mode="2d"]');
-            await p.waitForTimeout(1500);
-            await vue('course-plan', 16.4, 0, 0);
+            }
             await b.close();
           })();
           JS

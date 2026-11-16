@@ -29,10 +29,12 @@ export async function fetchVent(ctx: SiteContext): Promise<VentRaw> {
     `${OPEN_METEO.archive}?latitude=${ctx.lat}&longitude=${ctx.lon}` +
     `&start_date=${fmt(start)}&end_date=${fmt(end)}` +
     `&hourly=winddirection_10m,windspeed_10m` +
+    // Open-Meteo donne la vitesse en km/h par défaut : on la demande en m/s.
+    `&wind_speed_unit=ms` +
     `&timezone=${encodeURIComponent(ctx.timezone)}`;
 
   return fetchJson<VentRaw>(url, {
-    cacheKey: `open-meteo:vent-${YEARS_BACK}ans`,
+    cacheKey: `open-meteo:vent-${YEARS_BACK}ans-ms`,
     ttlMs: 90 * 24 * 60 * 60 * 1000,
     timeoutMs: 40_000,
   });

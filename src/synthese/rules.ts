@@ -90,7 +90,8 @@ const CATNAT_RECURRENT = 3; // arrêtés CatNat à moins de 1 km
 // Vent
 const VENT_FORT_MS = 5; // vitesse moyenne du secteur dominant (m/s)
 const VENT_NOTABLE_MS = 3.5;
-const CALME_RARE_PCT = 10; // <10 % de calmes : site venté en continu
+// Le calme (< 0,5 m/s) n'est pas un critère : ERA5, lissé sur ~30 km, n'en a presque jamais.
+const VENT_FORT_FREQUENT_PCT = 10; // part des heures ≥ 8 m/s (29 km/h)
 // Mobilités
 const DENSITE_CYCLABLE_FAIBLE = 1; // km/km²
 // Réglementaire
@@ -309,8 +310,8 @@ function regleVent(i: SyntheseInput): Enjeu {
       s(d, "vent", 2, "Vent dominant soutenu", `${vDom.toFixed(1)} m/s en moyenne, secteur ${dir}`);
     else if (vDom >= VENT_NOTABLE_MS)
       s(d, "vent", 1, "Vent dominant notable", `${vDom.toFixed(1)} m/s, secteur ${dir}`);
-    if (a.calmPct < CALME_RARE_PCT)
-      s(d, "vent", 1, "Peu de périodes calmes (site venté en continu)", `${a.calmPct} % de calmes`);
+    if (a.fortPct >= VENT_FORT_FREQUENT_PCT)
+      s(d, "vent", 2, "Vents forts fréquents", `≥ 29 km/h ${a.fortPct} % des heures${a.fortSecteur >= 0 ? `, surtout ${SECTEURS_16[a.fortSecteur] ?? ""}` : ""}`);
   } else d.nonEvalues.push("Module Vent non disponible");
 
   const score = d.signaux.reduce((a, b) => a + b.poids, 0);

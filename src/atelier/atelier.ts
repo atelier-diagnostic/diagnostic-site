@@ -24,6 +24,9 @@ import {
   CLASSES_SOLEIL, EXAGERATIONS, PAS_COURBES,
 } from "./couches";
 import { calculerCourbes } from "./courbes";
+import { calculerIsochrones, DUREES_MIN, COULEURS_ISO } from "./isochrones";
+
+const CLE_REPLIEES = "atelier:themes-replies";
 import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
@@ -115,6 +118,12 @@ function webglDisponible(): boolean {
 }
 
 export function createAtelier(root: HTMLElement): Atelier {
+  const famillesRepliees = new Set<string>();
+  try {
+    for (const f of JSON.parse(localStorage.getItem(CLE_REPLIEES) ?? "[]") as string[]) famillesRepliees.add(f);
+  } catch {
+    /* rien de retenu */
+  }
   if (!webglDisponible()) {
     root.innerHTML = `<div class="at-sans-webgl"><div>
       <h2>La carte de l'atelier ne peut pas s'afficher</h2>
@@ -204,7 +213,16 @@ export function createAtelier(root: HTMLElement): Atelier {
         <button type="button" class="icon-btn at-replier" aria-label="Replier le panneau" title="Replier le panneau">‹</button></div>
       <div class="at-site"></div>
       <div class="at-familles">
-        ${FAMILLES.map((f) => `<section class="at-famille"><h3>${f}</h3>${COUCHES.filter((c) => c.famille === f).map(ligne).join("")}</section>`).join("")}
+        ${FAMILLES.map(
+          (f) =>
+            `<section class="at-famille${famillesRepliees.has(f) ? " repliee" : ""}" data-famille="${f}">
+              <h3><button type="button" class="at-famille-btn" aria-expanded="${!famillesRepliees.has(f)}">
+                <svg class="at-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>${f}</span><span class="at-famille-n"></span>
+              </button></h3>
+              <div class="at-famille-corps">${COUCHES.filter((c) => c.famille === f).map(ligne).join("")}</div>
+            </section>`,
+        ).join("")}
       </div>
       <p class="at-sources">Sources : IGN (Plan, BD ORTHO®, BD TOPO®, Parcellaire Express), Géoportail de
         l'Urbanisme, Géorisques, INPN, OpenStreetMap.</p>
@@ -287,6 +305,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         perimetre: vecteur(),
         carroyage: vecteur(),
         courbes: vecteur(),
+        isochrones: vecteur(),
         // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
         // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
@@ -305,6 +324,35 @@ export function createAtelier(root: HTMLElement): Atelier {
           paint: { "hillshade-exaggeration": 0.4, "hillshade-shadow-color": "#5b5246", "hillshade-highlight-color": "#fffdf8", "hillshade-accent-color": "#6e655a" },
         },
         ...rasters.filter((c) => c.id !== "cadastre").map(raster),
+        {
+          id: "isochrones",
+          type: "fill",
+          source: "isochrones",
+          layout: { visibility: "none" },
+          paint: { "fill-color": ["get", "couleur"], "fill-opacity": 0.35 },
+        },
+        {
+          id: "isochrones-ligne",
+          type: "line",
+          source: "isochrones",
+          layout: { visibility: "none", "line-join": "round" },
+          paint: { "line-color": ["get", "couleur"], "line-width": 1.6, "line-dasharray": [4, 2] },
+        },
+        {
+          id: "isochrones-cotes",
+          type: "symbol",
+          source: "isochrones",
+          layout: {
+            visibility: "none",
+            "symbol-placement": "line",
+            "symbol-spacing": 400,
+            "text-field": ["get", "label"],
+            "text-font": ["Source Sans Pro Regular"],
+            "text-size": 11,
+            "text-keep-upright": true,
+          },
+          paint: { "text-color": "#0b4f35", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
+        },
         { id: "vegetation", type: "fill", source: "vegetation", layout: { visibility: "none" }, paint: { "fill-color": "#5f9e4b", "fill-opacity": 0.5 } },
         { id: "ombres", type: "fill", source: "ombres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.4 } },
         { id: "ombres-arbres", type: "fill", source: "ombres-arbres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.32 } },
@@ -400,6 +448,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "repere") return [];
     if (id === "course") return ["course-3d"];
     if (id === "courbes") return ["courbes", "courbes-cotes"];
+    if (id === "isochrones") return ["isochrones", "isochrones-ligne", "isochrones-cotes"];
     if (id === "ensoleillement") return ["ensoleillement"];
     return [id];
   }
@@ -422,7 +471,8 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (lid === "arbres-3d") visible = e.actif && rendu === "volume";
       map.setLayoutProperty(lid, "visibility", visible ? "visible" : "none");
       const prop = PROP[layer.type];
-      if (prop) map.setPaintProperty(lid, prop, e.opacite);
+      // Isochrones : la réglette règle le remplissage ; les contours restent nets.
+      if (prop && lid !== "isochrones-ligne") map.setPaintProperty(lid, prop, e.opacite);
       if (lid === "arbres-3d") coucheArbres.setOpacite(e.opacite);
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
@@ -430,6 +480,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     }
     if (id === "relief") majTerrain();
     if (id === "courbes" && e.actif) void dessinerCourbes();
+    if (id === "isochrones" && e.actif) void dessinerIsochrones();
     if (id === "repere" && marker) {
       const el = marker.getElement();
       el.style.display = e.actif ? "" : "none";
@@ -457,7 +508,31 @@ export function createAtelier(root: HTMLElement): Atelier {
   function compter(): void {
     const n = [...etat.values()].filter((e) => e.actif).length;
     q<HTMLElement>(".at-compte").textContent = `${n} active${n > 1 ? "s" : ""}`;
+    // Par thème : couches actives, utile quand le thème est replié.
+    for (const f of FAMILLES) {
+      const cs = COUCHES.filter((c) => c.famille === f);
+      const a = cs.filter((c) => etat.get(c.id)!.actif).length;
+      const el = root.querySelector<HTMLElement>(`[data-famille="${f}"] .at-famille-n`);
+      if (el) el.textContent = a ? `${a}/${cs.length}` : "";
+    }
   }
+  // Thèmes repliables ; l'état est retenu dans ce navigateur.
+  root.querySelectorAll<HTMLButtonElement>(".at-famille-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      const sec = b.closest<HTMLElement>(".at-famille")!;
+      const f = sec.dataset.famille!;
+      const replie = !sec.classList.contains("repliee");
+      sec.classList.toggle("repliee", replie);
+      b.setAttribute("aria-expanded", String(!replie));
+      if (replie) famillesRepliees.add(f);
+      else famillesRepliees.delete(f);
+      try {
+        localStorage.setItem(CLE_REPLIEES, JSON.stringify([...famillesRepliees]));
+      } catch {
+        /* stockage indisponible : l'état vaut pour la session */
+      }
+    }),
+  );
 
   // --- Coloration du bâti ----------------------------------------------------------
   function couleurBati(): maplibregl.DataDrivenPropertyValueSpecification<string> {
@@ -637,6 +712,32 @@ export function createAtelier(root: HTMLElement): Atelier {
       void dessinerCourbes();
     }),
   );
+
+  // --- Isochrones à pied ----------------------------------------------------------------
+  let isoPour: SiteContext | null = null;
+  async function dessinerIsochrones(): Promise<void> {
+    if (!site || !etat.get("isochrones")!.actif || isoPour === site) return;
+    const ctx = site;
+    isoPour = ctx;
+    etatCouche("isochrones", "Calcul des itinéraires…");
+    try {
+      const r = await calculerIsochrones(ctx.lat, ctx.lon);
+      if (site !== ctx) return;
+      (map.getSource("isochrones") as maplibregl.GeoJSONSource).setData(r.geojson);
+      const fr = (v: number) => v.toLocaleString("fr-FR");
+      const parts = DUREES_MIN.map((m) =>
+        r.surfaces[m] != null ? `<i style="background:${COULEURS_ISO[m]}"></i>${m} min : ${fr(r.surfaces[m]!)} ha` : `${m} min : non calculé`,
+      );
+      const p = root.querySelector<HTMLElement>('[data-couche="isochrones"] .at-etat');
+      if (p) {
+        p.innerHTML = `<span class="at-legende">${parts.map((x) => `<span>${x}</span>`).join("")}</span>Surface atteinte à pied depuis le site.`;
+        p.hidden = false;
+      }
+    } catch {
+      isoPour = null;
+      if (site === ctx) etatCouche("isochrones", "Service d'itinéraire de l'IGN indisponible. Réessayer en réactivant la couche.");
+    }
+  }
 
   // --- Carroyage Lambert-93 ----------------------------------------------------------
   function dessinerCarroyage(): void {
@@ -922,6 +1023,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     for (const id of ["bati", "arbres", "vegetation", "ombres"]) if (etat.get(id)!.actif) void chargerCouche(id);
     if (etat.get("ensoleillement")!.actif) void chargerCouche("bati");
     if (etat.get("courbes")!.actif) void dessinerCourbes();
+    if (etat.get("isochrones")!.actif) void dessinerIsochrones();
   }
 
   void pret.then(() => {

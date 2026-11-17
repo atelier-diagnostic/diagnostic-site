@@ -47,7 +47,7 @@ jobs:
             await p.waitForFunction(() => /ha|indisponible/.test(document.querySelector('[data-couche="isochrones"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
             log('iso', await p.evaluate(() => document.querySelector('[data-couche="isochrones"] .at-etat')?.textContent));
             await p.waitForFunction(() => /fonction|indisponibles/.test(document.querySelector('[data-couche="equipements"] .at-etat')?.textContent||''), null, {timeout:120000}).catch(e=>log('attente', e.message.split('\n')[0]));
-            log('equip', await p.evaluate(() => document.querySelector('[data-couche="equipements"] .at-etat')?.innerText));
+            log('equip', await p.evaluate(() => { const e = document.querySelector('[data-couche="equipements"] .at-etat'); return [e?.closest('.at-couche')?.className, getComputedStyle(e).display, e.hidden, e.innerText || e.textContent].join(' ## '); }));
             await p.locator('[data-couche="equipements"]').screenshot({ path:'shots/equip-panneau.jpg', quality:80 }).catch(e=>log('capture', e.message.split('\n')[0]));
             await p.evaluate(() => { for (const f of ['Occupation du sol','Soleil','Urbanisme','Risques · Nature']) document.querySelector(`[data-famille="${f}"] .at-famille-btn`).click(); });
             log('replies', await p.evaluate(() => [...document.querySelectorAll('.at-famille')].map(s=>s.dataset.famille+':'+(s.classList.contains('repliee')?'R':'O')+':'+s.querySelector('.at-famille-n').textContent).join(' | ')));

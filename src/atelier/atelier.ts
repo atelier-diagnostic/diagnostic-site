@@ -25,6 +25,7 @@ import {
 } from "./couches";
 import { calculerCourbes } from "./courbes";
 import { calculerIsochrones, DUREES_MIN, COULEURS_ISO } from "./isochrones";
+import { recenserEquipements, FONCTIONS } from "./equipements";
 
 const CLE_REPLIEES = "atelier:themes-replies";
 import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
@@ -202,7 +203,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         <label class="at-opacite"><span>Opacité</span>
           <input type="range" min="0" max="100" step="5" value="${Math.round(e.opacite * 100)}" aria-label="Opacité de ${esc(c.titre)}">
           <output>${Math.round(e.opacite * 100)} %</output></label>
-        <p class="at-etat" hidden></p>
+        <div class="at-etat" hidden></div>
       </div>
     </div>`;
   };
@@ -306,6 +307,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         carroyage: vecteur(),
         courbes: vecteur(),
         isochrones: vecteur(),
+        equipements: vecteur(),
         // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
         // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
@@ -379,6 +381,19 @@ export function createAtelier(root: HTMLElement): Atelier {
           },
         },
         {
+          id: "equipements",
+          type: "circle",
+          source: "equipements",
+          layout: { visibility: "none" },
+          paint: {
+            "circle-color": ["get", "couleur"],
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 17, 6],
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 1.2,
+            "circle-opacity": 1,
+          },
+        },
+        {
           id: "courbes",
           type: "line",
           source: "courbes",
@@ -449,6 +464,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "course") return ["course-3d"];
     if (id === "courbes") return ["courbes", "courbes-cotes"];
     if (id === "isochrones") return ["isochrones", "isochrones-ligne", "isochrones-cotes"];
+    if (id === "equipements") return ["equipements"];
     if (id === "ensoleillement") return ["ensoleillement"];
     return [id];
   }
@@ -477,10 +493,12 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
       if (lid === "courbes-cotes") map.setPaintProperty(lid, "text-opacity", e.opacite);
+      if (lid === "equipements") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
     }
     if (id === "relief") majTerrain();
     if (id === "courbes" && e.actif) void dessinerCourbes();
     if (id === "isochrones" && e.actif) void dessinerIsochrones();
+    if (id === "equipements" && e.actif) void dessinerEquipements();
     if (id === "repere" && marker) {
       const el = marker.getElement();
       el.style.display = e.actif ? "" : "none";
@@ -738,6 +756,51 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (site === ctx) etatCouche("isochrones", "Service d'itinéraire de l'IGN indisponible. Réessayer en réactivant la couche.");
     }
   }
+
+  // --- Ville du quart d'heure : équipements dans les isochrones --------------------------
+  let equipPour: SiteContext | null = null;
+  async function dessinerEquipements(): Promise<void> {
+    if (!site || !etat.get("equipements")!.actif || equipPour === site) return;
+    const ctx = site;
+    equipPour = ctx;
+    const p = root.querySelector<HTMLElement>('[data-couche="equipements"] .at-etat');
+    etatCouche("equipements", "Calcul des isochrones et recensement des équipements…");
+    try {
+      const iso = await calculerIsochrones(ctx.lat, ctx.lon);
+      const r = await recenserEquipements(iso.geojson);
+      if (site !== ctx) return;
+      (map.getSource("equipements") as maplibregl.GeoJSONSource).setData(r.geojson);
+      const presentes = FONCTIONS.filter((f) => r.comptes[f.id][15] > 0).length;
+      const a10 = FONCTIONS.filter((f) => r.comptes[f.id][10] > 0).length;
+      const lignes = FONCTIONS.map((f) => {
+        const c = r.comptes[f.id];
+        return `<tr><th><i style="background:${f.couleur}"></i>${f.titre}</th><td>${c[5]}</td><td>${c[10]}</td><td>${c[15]}</td></tr>`;
+      }).join("");
+      if (p) {
+        p.innerHTML =
+          `<strong>${presentes} fonction${presentes > 1 ? "s" : ""} sur 6</strong> à moins de 15 min à pied, ${a10} à moins de 10 min.` +
+          `<table class="at-quart"><thead><tr><th></th><th>5 min</th><th>10 min</th><th>15 min</th></tr></thead><tbody>${lignes}</tbody></table>` +
+          `Nombre d'équipements recensés (cumulé).` +
+          (r.manques.includes("OSM") ? ` <strong>OpenStreetMap n'a pas répondu</strong> : commerces, pharmacies, médecins, aires de jeux et arrêts manquent ; réactiver la couche plus tard.` : "") +
+          (r.manques.includes("IGN") ? ` <strong>La BD TOPO n'a pas répondu</strong> : écoles, santé, sport, culture, mairies et postes manquent ; réactiver la couche plus tard.` : "");
+        p.hidden = false;
+      }
+    } catch {
+      equipPour = null;
+      if (site === ctx) etatCouche("equipements", "Isochrones ou OpenStreetMap indisponibles. Réessayer en réactivant la couche.");
+    }
+  }
+  map.on("click", "equipements", (ev) => {
+    const f = ev.features?.[0];
+    if (!f) return;
+    const pr = f.properties as { nom: string; titre: string; minutes: number };
+    new maplibregl.Popup({ closeButton: false, maxWidth: "240px" })
+      .setLngLat(ev.lngLat)
+      .setHTML(`<strong>${pr.nom ? pr.nom.replace(/[<>&]/g, "") : "Sans nom"}</strong><br>${pr.titre} · moins de ${pr.minutes} min à pied<br><small>${(f.properties as { source: string }).source}</small>`)
+      .addTo(map);
+  });
+  map.on("mouseenter", "equipements", () => (map.getCanvas().style.cursor = "pointer"));
+  map.on("mouseleave", "equipements", () => (map.getCanvas().style.cursor = ""));
 
   // --- Carroyage Lambert-93 ----------------------------------------------------------
   function dessinerCarroyage(): void {
@@ -1024,6 +1087,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (etat.get("ensoleillement")!.actif) void chargerCouche("bati");
     if (etat.get("courbes")!.actif) void dessinerCourbes();
     if (etat.get("isochrones")!.actif) void dessinerIsochrones();
+    if (etat.get("equipements")!.actif) void dessinerEquipements();
   }
 
   void pret.then(() => {

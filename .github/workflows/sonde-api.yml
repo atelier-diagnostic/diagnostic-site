@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/courbes-niveau }
+        with: { ref: claude/isochrones-replier }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -43,16 +43,14 @@ jobs:
               log(nom, JSON.stringify(await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); return { bati: (m.getSource('bati')?._data?.features || m.getSource('bati')?.serialize?.().data?.features || []).length, etatBati: document.querySelector('[data-couche="bati"] .at-etat')?.textContent, terrain: m.getTerrain(), alt: m.queryTerrainElevation ? m.queryTerrainElevation(c) : null, hill: m.getLayoutProperty('relief','visibility') }; })));
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
             };
-            await p.evaluate(() => { document.querySelector('[data-couche="courbes"] .switch').click(); document.querySelector('[data-couche="cadastre"] .switch').click(); });
-            await p.waitForFunction(() => /Équidistance|indisponible|Pas d/.test(document.querySelector('[data-couche="courbes"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
-            log('courbes', await p.evaluate(() => document.querySelector('[data-couche="courbes"] .at-etat')?.textContent), await p.evaluate(() => document.querySelector('#vue-atelier').__carte.getSource('courbes').serialize().data.features.length));
-            await p.evaluate(() => { const cb = document.querySelector('[data-couche="relief"] .switch'); cb.click(); });
-            await p.waitForTimeout(500);
-            await vue('courbes-2d', 16, 0, 0);
-            await p.click('.at-mode button[data-mode="3d"]');
-            await p.waitForTimeout(1500);
-            await vue('relief-3d', 15.6, 65, 160);
-            
+            await p.evaluate(() => { document.querySelector('[data-couche="isochrones"] .switch').click(); });
+            await p.waitForFunction(() => /ha|indisponible/.test(document.querySelector('[data-couche="isochrones"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
+            log('iso', await p.evaluate(() => document.querySelector('[data-couche="isochrones"] .at-etat')?.textContent));
+            await p.evaluate(() => { for (const f of ['Occupation du sol','Soleil','Urbanisme','Risques · Nature']) document.querySelector(`[data-famille="${f}"] .at-famille-btn`).click(); });
+            log('replies', await p.evaluate(() => [...document.querySelectorAll('.at-famille')].map(s=>s.dataset.famille+':'+(s.classList.contains('repliee')?'R':'O')+':'+s.querySelector('.at-famille-n').textContent).join(' | ')));
+            await p.locator('.at-panneau, .at-couches, aside').first().screenshot({ path:'shots/panneau.jpg', quality:72 }).catch(e=>log('capture', e.message.split('\n')[0]));
+            await p.click('.at-replier').catch(()=>{});
+            await vue('iso-2d', 14.6, 0, 0);
             await b.close();
           })();
           JS

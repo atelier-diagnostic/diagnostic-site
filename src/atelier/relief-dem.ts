@@ -44,7 +44,7 @@ async function versTerrarium(z: Float32Array): Promise<ArrayBuffer> {
 const MAX_EN_COURS = 6;
 let enCours = 0;
 const file: (() => void)[] = [];
-const cache = new Map<string, Promise<ArrayBuffer>>();
+const cache = new Map<string, Promise<Float32Array>>();
 const attendre = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function creneau<T>(f: () => Promise<T>): Promise<T> {
@@ -58,13 +58,13 @@ async function creneau<T>(f: () => Promise<T>): Promise<T> {
   }
 }
 
-async function charger(url: string): Promise<ArrayBuffer> {
+async function charger(url: string): Promise<Float32Array> {
   for (let essai = 0; ; essai++) {
     const rep = await creneau(() => fetch(url));
     if (rep.ok) {
       const buf = await rep.arrayBuffer();
       if (buf.byteLength < TAILLE * TAILLE * 4) throw new Error("Relief IGN : réponse inattendue");
-      return versTerrarium(new Float32Array(buf, 0, TAILLE * TAILLE));
+      return new Float32Array(buf, 0, TAILLE * TAILLE);
     }
     if (essai >= 3 || !(rep.status === 429 || rep.status >= 500)) throw new Error(`Relief IGN : HTTP ${rep.status}`);
     await attendre([600, 1500, 3500][essai] + Math.random() * 400);
@@ -74,16 +74,28 @@ async function charger(url: string): Promise<ArrayBuffer> {
 export function enregistrerProtocoleRelief(): void {
   if (enregistre) return;
   enregistre = true;
-  maplibregl.addProtocol("ignbil", async (params) => {
-    const url = params.url.replace(/^ignbil:\/\//, "https://");
-    let p = cache.get(url);
-    if (!p) {
-      p = charger(url);
-      cache.set(url, p);
-      p.catch(() => cache.delete(url));
-      if (cache.size > 600) cache.delete(cache.keys().next().value!);
-    }
-    // Copie : MapLibre transfère le tampon au worker, l'original resterait vide.
-    return { data: (await p).slice(0) };
-  });
+  maplibregl.addProtocol("ignbil", async (params) => ({
+    data: await versTerrarium(await altitudesBrutes(params.url.replace(/^ignbil:\/\//, "https://"))),
+  }));
+}
+
+/** Altitudes brutes d'une tuile (256 × 256, ligne 0 au nord), mises en cache. */
+function altitudesBrutes(url: string): Promise<Float32Array> {
+  let p = cache.get(url);
+  if (!p) {
+    p = charger(url);
+    cache.set(url, p);
+    p.catch(() => cache.delete(url));
+    if (cache.size > 600) cache.delete(cache.keys().next().value!);
+  }
+  return p;
+}
+
+/** Altitudes de la tuile Web Mercator (z, x, y), mêmes requêtes que le terrain. */
+export const TAILLE_TUILE = TAILLE;
+export function altitudesTuile(z: number, x: number, y: number): Promise<Float32Array> {
+  const C = 20037508.342789244;
+  const t = (2 * C) / 2 ** z;
+  const bbox = [-C + x * t, C - (y + 1) * t, -C + (x + 1) * t, C - y * t].join(",");
+  return altitudesBrutes(DEM_TUILES.replace("ignbil://", "https://").replace("{bbox-epsg-3857}", bbox));
 }

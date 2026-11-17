@@ -62,6 +62,9 @@ export const PAS_CARROYAGE = [50, 100, 200, 500] as const;
 /** Exagération du relief en 3D. */
 export const EXAGERATIONS = [1, 1.5, 2, 3] as const;
 
+/** Équidistance des courbes de niveau proposée (m). */
+export const PAS_COURBES = ["auto", 1, 2, 5, 10] as const;
+
 export const FONDS = {
   plan: { titre: "Plan", tuiles: wmts(IGN_LAYERS.plan) },
   photo: { titre: "Photo", tuiles: wmts(IGN_LAYERS.ortho) },
@@ -79,6 +82,15 @@ export const COUCHES: CoucheDef[] = [
     active: false,
     opacite: 0.4,
     note: "En 3D, toutes les couches se posent sur le relief (exagération réglable) ; l'opacité règle l'ombrage, visible aussi en 2D. Les calculs d'ombres et d'heures de soleil au sol restent faits sur sol plat ; le relief lointain est dans le module Soleil.",
+  },
+  {
+    id: "courbes",
+    famille: "Fond",
+    titre: "Courbes de niveau",
+    source: "Calcul à partir du RGE ALTI®",
+    active: false,
+    opacite: 0.85,
+    note: "Courbes calculées dans l'atelier à partir du RGE ALTI® (un point tous les 3 à 4 m, légèrement lissé) sur un carré autour du site ; cotes en mètres NGF. Une courbe sur cinq est maîtresse et cotée.",
   },
   {
     id: "cosia",

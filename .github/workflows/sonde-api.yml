@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/ensoleillement-sol }
+        with: { ref: claude/relief-3d }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -28,26 +28,28 @@ jobs:
             const c = await b.newContext({ viewport:{width:1200,height:820} }); const p = await c.newPage();
             p.on('pageerror', e => log('pageerror', e.message.slice(0,300)));
             await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
-            await p.fill('#search-input', '2 rue jean 13004 marseille');
+            await p.fill('#search-input', 'montée de l oratoire 13007 marseille');
             await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
             await p.keyboard.press('Enter');
             await p.waitForSelector('.map-atelier:not([hidden])', {timeout:60000});
             await p.click('.map-atelier');
             await p.waitForFunction(()=>/périmètre/.test(document.querySelector('.at-site')?.textContent||''), null, {timeout:60000});
-            await p.click('[data-couche="ensoleillement"] .switch');
-            await p.waitForTimeout(500);
-            log('panneau', await p.isVisible('.at-soleil'), await p.isVisible('.m3d-presets button[data-md="03-21"]'));
-            await p.click('.at-replier');
-            for (const [md, nom] of [['03-20','sol-mars'],['12-21','sol-dec']]) {
-              const t0 = Date.now();
-              await p.click(`.m3d-presets button[data-md="${md}"]`);
-              await p.waitForFunction(() => /sol libre/.test(document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
-              await p.waitForFunction((m) => (document.querySelector('[data-couche="ensoleillement"] .at-etat')?.textContent||'').includes(m), md==='03-20'?'mars':'décembre', {timeout:90000}).catch(()=>{});
-              log(nom, Date.now()-t0, 'ms', await p.innerText('[data-couche="ensoleillement"] .at-etat'));
-              await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: 16.6 }); });
-              await p.waitForTimeout(3000);
+            p.on('console', m => { if (m.type()==='error' || /Relief/.test(m.text())) log('console', m.text().slice(0,200)); });
+            p.on('response', r => { if (/wms-r/.test(r.url()) && !r.ok()) log('wms-r', r.status(), r.url().slice(0,160)); });
+            await p.click('.at-replier').catch(()=>{});
+            const vue = async (nom, zoom, pitch, bearing) => {
+              await p.evaluate(([z, pt, br]) => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: z, pitch: pt, bearing: br }); }, [zoom, pitch, bearing]);
+              await p.waitForTimeout(9000);
+              log(nom, JSON.stringify(await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); return { terrain: m.getTerrain(), alt: m.queryTerrainElevation ? m.queryTerrainElevation(c) : null, hill: m.getLayoutProperty('relief','visibility') }; })));
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
-            }
+            };
+            await p.evaluate(() => { const cb = document.querySelector('[data-couche="relief"] .switch'); cb.click(); });
+            await p.waitForTimeout(500);
+            await vue('relief-2d', 15.2, 0, 0);
+            await p.click('.at-mode button[data-mode="3d"]');
+            await p.waitForTimeout(1500);
+            await vue('relief-3d', 15.6, 65, 160);
+            await vue('relief-3d-proche', 17, 62, 140);
             await b.close();
           })();
           JS

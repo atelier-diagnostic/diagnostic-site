@@ -170,6 +170,8 @@ async function rendre(
   const style = map.getStyle();
   style.layers = style.layers.filter((l) => (l.type as string) !== "custom" && !l.id.startsWith("cadre-"));
   delete (style.sources as Record<string, unknown>)["cadre"];
+  // Planche en plan : pas de terrain 3D (l'ombrage du relief reste).
+  delete (style as { terrain?: unknown }).terrain;
 
   const div = document.createElement("div");
   div.style.cssText = `position:fixed;left:-${TUILE * 2}px;top:0;width:${TUILE}px;height:${TUILE}px;pointer-events:none;`;

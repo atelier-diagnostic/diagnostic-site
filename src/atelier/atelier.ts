@@ -21,8 +21,9 @@ import { sunAtLegalTime, formatHour } from "../map3d/sun";
 import {
   COUCHES, FAMILLES, FONDS, HAUTEURS, INCONNU, USAGES, USAGE_AUTRE, NEUTRE, COSIA, PAS_CARROYAGE, tuilesCosia,
   type CoucheDef, type Fond, type MillesimeCosia,
-  CLASSES_SOLEIL,
+  CLASSES_SOLEIL, EXAGERATIONS,
 } from "./couches";
+import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
@@ -135,6 +136,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   let derniersArbres: { arbres: import("../modules/soleil/fetch").ArbreOsm[]; lat0: number; lon0: number } | null = null;
   let millesime: MillesimeCosia = "2021-2023";
   let pas: (typeof PAS_CARROYAGE)[number] = 100;
+  let exag: (typeof EXAGERATIONS)[number] = 1.5;
 
   // --- Gabarit ----------------------------------------------------------------
   const ligne = (c: CoucheDef) => {
@@ -152,6 +154,10 @@ export function createAtelier(root: HTMLElement): Atelier {
           ? `<div class="segmented seg-sm" role="group" aria-label="Rendu des arbres">
               <button type="button" data-rendu="volume" aria-pressed="true">Volume</button>
               <button type="button" data-rendu="point" aria-pressed="false">Point</button>
+            </div>`
+        : c.id === "relief"
+          ? `<div class="segmented seg-sm" role="group" aria-label="Exagération du relief en 3D">
+              ${EXAGERATIONS.map((v) => `<button type="button" data-exag="${v}" aria-pressed="${v === exag}">×${String(v).replace(".", ",")}</button>`).join("")}
             </div>`
         : c.id === "carroyage"
           ? `<div class="segmented seg-sm" role="group" aria-label="Pas du carroyage">
@@ -254,6 +260,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   });
   const rasters = COUCHES.filter((c) => c.tuiles);
 
+  enregistrerProtocoleRelief();
   const map = new maplibregl.Map({
     container: canvasEl,
     style: {
@@ -271,11 +278,23 @@ export function createAtelier(root: HTMLElement): Atelier {
         "ombres-arbres": vecteur(),
         perimetre: vecteur(),
         carroyage: vecteur(),
+        // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
+        // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
+        // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
+        dem: { type: "raster-dem", tiles: [DEM_TUILES], tileSize: 256, encoding: "terrarium", maxzoom: 15, attribution: "© IGN RGE ALTI®" },
+        "dem-ombrage": { type: "raster-dem", tiles: [DEM_TUILES], tileSize: 256, encoding: "terrarium", maxzoom: 14 },
       },
       layers: [
         { id: "fond-uni", type: "background", paint: { "background-color": "#efeeea" } },
         { id: "fond-plan", type: "raster", source: "plan", paint: { "raster-opacity": 0.7 } },
         { id: "fond-photo", type: "raster", source: "photo", layout: { visibility: "none" }, paint: { "raster-opacity": 0.7 } },
+        {
+          id: "relief",
+          type: "hillshade",
+          source: "dem-ombrage",
+          layout: { visibility: "none" },
+          paint: { "hillshade-exaggeration": 0.4, "hillshade-shadow-color": "#5b5246", "hillshade-highlight-color": "#fffdf8", "hillshade-accent-color": "#6e655a" },
+        },
         ...rasters.filter((c) => c.id !== "cadastre").map(raster),
         { id: "vegetation", type: "fill", source: "vegetation", layout: { visibility: "none" }, paint: { "fill-color": "#5f9e4b", "fill-opacity": 0.5 } },
         { id: "ombres", type: "fill", source: "ombres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.4 } },
@@ -335,7 +354,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   );
 
   // --- Application de l'état aux couches ---------------------------------------
-  const PROP: Record<string, string> = { raster: "raster-opacity", fill: "fill-opacity", circle: "circle-opacity", line: "line-opacity", "fill-extrusion": "fill-extrusion-opacity" };
+  const PROP: Record<string, string> = { hillshade: "hillshade-exaggeration", raster: "raster-opacity", fill: "fill-opacity", circle: "circle-opacity", line: "line-opacity", "fill-extrusion": "fill-extrusion-opacity" };
   function couchesMap(id: string): string[] {
     if (id === "fond") return [];
     if (id === "bati") return ["bati-2d", "bati-3d"];
@@ -369,6 +388,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
     }
+    if (id === "relief") majTerrain();
     if (id === "repere" && marker) {
       const el = marker.getElement();
       el.style.display = e.actif ? "" : "none";
@@ -494,6 +514,52 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.easeTo({ pitch: mode3d ? 55 : 0, bearing: mode3d ? -20 : 0, duration: 600 });
       appliquer("bati");
       appliquer("arbres");
+      majTerrain();
+    }),
+  );
+
+  // --- Relief 3D -----------------------------------------------------------------
+  // Terrain en vue 3D seulement : en 2D le plan reste orthogonal et l'ombrage suffit.
+  function majTerrain(): void {
+    const actif = etat.get("relief")!.actif && mode3d;
+    const courant = map.getTerrain();
+    if (actif && (!courant || courant.exaggeration !== exag)) map.setTerrain({ source: "dem", exaggeration: exag });
+    if (!actif && courant) map.setTerrain(null);
+    poserSurSol();
+  }
+  /** Arbres et course du soleil posés sur le terrain (altitudes lues une fois les tuiles chargées). */
+  let minuterieSol = 0;
+  let cleSol = "";
+  function poserSurSol(): void {
+    clearTimeout(minuterieSol);
+    if (!map.getTerrain()) {
+      if (cleSol === "") return;
+      cleSol = "";
+      coucheArbres.setSol(null);
+      coucheCourse.setAltitude(0);
+      return;
+    }
+    minuterieSol = window.setTimeout(() => {
+      if (!map.getTerrain() || !site) return;
+      const alt = (lon: number, lat: number) => map.queryTerrainElevation([lon, lat]);
+      // On ne repose que si le terrain chargé a changé (sinon boucle : reposer redessine, donc « idle »).
+      const d = 0.002;
+      const cle = [[0, 0], [d, 0], [-d, 0], [0, d], [0, -d]].map(([a, b]) => Math.round((alt(site!.lon + a, site!.lat + b) ?? 0) * 2)).join(",") + `|${exag}`;
+      if (cle === cleSol) return;
+      cleSol = cle;
+      coucheArbres.setSol(alt);
+      coucheCourse.setAltitude(alt(site.lon, site.lat) ?? 0);
+    }, 300);
+  }
+  map.on("idle", () => {
+    if (map.getTerrain()) poserSurSol();
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-exag]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      exag = Number(b.dataset.exag) as typeof exag;
+      root.querySelectorAll("[data-exag]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      await pret;
+      majTerrain();
     }),
   );
 

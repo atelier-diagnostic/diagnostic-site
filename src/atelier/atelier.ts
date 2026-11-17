@@ -620,7 +620,8 @@ export function createAtelier(root: HTMLElement): Atelier {
       etatCouche(
         "courbes",
         c.geojson.features.length
-          ? `Équidistance ${fr(c.equidistance)} m · altitudes de ${fr(c.min)} à ${fr(c.max)} m sur un carré de ${fr((2 * demi) / 1000)} km de côté.`
+          ? `Équidistance ${fr(c.equidistance)} m · altitudes de ${fr(c.min)} à ${fr(c.max)} m sur un carré de ${fr((2 * demi) / 1000)} km de côté.` +
+            (c.manquantes ? ` Courbes incomplètes : ${c.manquantes} tuile(s) d'altitudes refusée(s) par l'IGN, réactiver la couche pour compléter.` : "")
           : "Pas d'altitude disponible ici.",
       );
     } catch {

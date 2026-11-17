@@ -1,0 +1,31 @@
+name: sonde-curl
+on: { push: { branches: [claude/sonde-api] } }
+jobs:
+  curl:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set +e
+          pip install --quiet pillow 2>/dev/null
+          curl -s -o leg.png 'https://data.geopf.fr/annexes/ressources/legendes/CoSIA-legend.png'
+          python3 - <<'PY'
+          from PIL import Image
+          import math, urllib.request, collections, base64, io
+          im=Image.open('leg.png').convert('RGB'); print('legende', im.size)
+          c=collections.Counter(im.getdata()); print('legende couleurs', [ (('#%02x%02x%02x'%k),n) for k,n in c.most_common(30)])
+          buf=io.BytesIO(); im.save(buf,'PNG'); b=base64.b64encode(buf.getvalue()).decode()
+          print('LEGB64', b)
+          def tile(lat,lon,z):
+              n=2**z; x=int((lon+180)/360*n); y=int((1-math.log(math.tan(math.radians(lat))+1/math.cos(math.radians(lat)))/math.pi)/2*n); return x,y
+          for nom,lat,lon in [('marseille',43.2879,5.3691),('arles',43.6694,4.6425)]:
+            for layer in ['IGNF_COSIA_2021-2023','IGNF_COSIA_2017-2020']:
+              for z in (18,17):
+                x,y=tile(lat,lon,z)
+                u=f'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&LAYER={layer}&FORMAT=image/png'
+                try:
+                  r=urllib.request.urlopen(urllib.request.Request(u,headers={'Origin':'https://esope023.github.io'}),timeout=30)
+                  data=r.read(); hdr=r.headers.get('Access-Control-Allow-Origin')
+                  t=Image.open(io.BytesIO(data)); print(nom,layer,z,t.mode,t.size,'CORS',hdr)
+                  t=t.convert('RGBA'); cc=collections.Counter(t.getdata()); print('  couleurs',len(cc), [('#%02x%02x%02x/%d'%k,n) for k,n in cc.most_common(25)])
+                except Exception as e: print(nom,layer,z,'ERR',e)
+          PY

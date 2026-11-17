@@ -10,6 +10,7 @@
 // Vue imprimée : nord en haut, sans inclinaison (2D) ; les arbres y sont des
 // points.
 
+import { nordSolaire, encombrement } from "./nord-solaire";
 import maplibregl from "maplibre-gl";
 import { jsPDF } from "jspdf";
 import { creerCoucheArbres3D } from "./arbres3d";
@@ -40,7 +41,7 @@ export interface OptionsMiseEnPage {
   /** Conteneur de la carte, où placer le bouton et le panneau. */
   carte: HTMLElement;
   legende(): ElementLegende[];
-  site(): { label: string } | null;
+  site(): { label: string; lat: number } | null;
   /** Arbres en volume à redessiner sur la planche (null : rendu en points ou couche éteinte). */
   arbres3d(): { arbres: ArbreOsm[]; lat0: number; lon0: number } | null;
   /** Bascule la vue en 2D (la planche est imprimée nord en haut, à plat). */
@@ -232,7 +233,7 @@ async function rendre(
 
 // --- Habillage PDF (vectoriel) -------------------------------------------------------
 
-function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, solW: number, legende: ElementLegende[], site: string): void {
+function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, solW: number, legende: ElementLegende[], site: string, lat: number): void {
   const x0 = g.marge;
   const y0 = g.marge;
   const f = Math.max(1, Math.min(g.w, g.h) / 210); // facteur de taille des textes
@@ -240,19 +241,35 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   doc.setLineWidth(0.3 * f);
   doc.rect(x0, y0, g.carteW, g.carteH);
 
-  // Nord (haut droit de la carte)
-  const nx = x0 + g.carteW - 10 * f;
-  const ny = y0 + 6 * f;
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(nx - 5 * f, ny - 2 * f, 10 * f, 15 * f, 1.5 * f, 1.5 * f, "F");
-  doc.setFillColor(29, 29, 31);
-  doc.triangle(nx, ny, nx - 3 * f, ny + 9 * f, nx, ny + 7 * f, "F");
-  doc.setFillColor(170, 170, 175);
-  doc.triangle(nx, ny, nx + 3 * f, ny + 9 * f, nx, ny + 7 * f, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7 * f);
-  doc.setTextColor(29, 29, 31);
-  doc.text("N", nx, ny + 12.5 * f, { align: "center" });
+  // Nord solaire (haut droit de la carte), calculé pour la latitude du site.
+  {
+    const R = 8 * f;
+    const [ga, ha, dr, ba] = encombrement(R);
+    const cx = x0 + g.carteW - dr - 2.5 * f;
+    const cy = y0 + ha + 2.5 * f;
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(cx - ga - 1.5 * f, cy - ha - 1.5 * f, ga + dr + 3 * f, ha + ba + 3 * f, 1.5 * f, 1.5 * f, "F");
+    doc.setDrawColor(29, 29, 31);
+    doc.setFillColor(29, 29, 31);
+    doc.setTextColor(29, 29, 31);
+    for (const p of nordSolaire(lat, R)) {
+      if (p.t === "ligne") {
+        doc.setLineWidth(p.e);
+        const pts = p.ferme ? [...p.pts, p.pts[0]] : p.pts;
+        for (let i = 1; i < pts.length; i++) doc.line(cx + pts[i - 1][0], cy + pts[i - 1][1], cx + pts[i][0], cy + pts[i][1]);
+      } else if (p.t === "plein") {
+        const [a, b, c] = p.pts;
+        doc.triangle(cx + a[0], cy + a[1], cx + b[0], cy + b[1], cx + c[0], cy + c[1], "F");
+      } else if (p.t === "disque") doc.circle(cx + p.x, cy + p.y, p.r, "F");
+      else {
+        doc.setFont("helvetica", p.gras ? "bold" : "normal");
+        doc.setFontSize(p.taille / 0.3528);
+        doc.text(p.s, cx + p.x, cy + p.y, { align: p.align });
+      }
+    }
+    doc.setLineWidth(0.3 * f);
+    doc.setDrawColor(40);
+  }
 
   // Échelle graphique (bas gauche de la carte)
   const mParMm = r.echelle / 1000;
@@ -289,7 +306,7 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   const lignes = [
     site,
     `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`,
-    `Édité le ${new Date().toLocaleDateString("fr-FR")} · Lambert-93 / Web Mercator, nord en haut`,
+    `Édité le ${new Date().toLocaleDateString("fr-FR")} · Lambert-93 / Web Mercator, nord en haut, heures solaires`,
   ].filter(Boolean);
   doc.text(lignes.flatMap((l) => doc.splitTextToSize(l, colCart - 4 * f)), x0, by + 15 * f, { lineHeightFactor: 1.35 });
   doc.setFontSize(5.8 * f);
@@ -335,7 +352,7 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
 
 // --- Habillage PNG (canevas) ------------------------------------------------------------
 
-function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnType<typeof gabarit>, pxParMm: number, solW: number, legende: ElementLegende[], site: string): void {
+function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnType<typeof gabarit>, pxParMm: number, solW: number, legende: ElementLegende[], site: string, lat: number): void {
   const mm = (v: number) => v * pxParMm;
   const f = Math.max(1, Math.min(g.w, g.h) / 210);
   const x0 = mm(g.marge);
@@ -345,17 +362,41 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   ctx.strokeRect(x0, y0, mm(g.carteW), mm(g.carteH));
   const police = (taille: number, gras = false) => `${gras ? "600 " : ""}${mm(taille * 0.3528 * f)}px -apple-system, "Helvetica Neue", Arial, sans-serif`;
 
-  // Nord
-  const nx = x0 + mm(g.carteW - 10 * f);
-  const ny = y0 + mm(6 * f);
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(nx - mm(5 * f), ny - mm(2 * f), mm(10 * f), mm(15 * f));
-  ctx.fillStyle = "#1d1d1f";
-  ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(nx - mm(3 * f), ny + mm(9 * f)); ctx.lineTo(nx, ny + mm(7 * f)); ctx.fill();
-  ctx.fillStyle = "#aaaaaf";
-  ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(nx + mm(3 * f), ny + mm(9 * f)); ctx.lineTo(nx, ny + mm(7 * f)); ctx.fill();
-  ctx.fillStyle = "#1d1d1f"; ctx.font = police(7, true); ctx.textAlign = "center";
-  ctx.fillText("N", nx, ny + mm(12.5 * f));
+  // Nord solaire
+  {
+    const R = 8 * f;
+    const [ga, ha, dr, ba] = encombrement(R);
+    const cx = x0 + mm(g.carteW - dr - 2.5 * f);
+    const cy = y0 + mm(ha + 2.5 * f);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(cx - mm(ga + 1.5 * f), cy - mm(ha + 1.5 * f), mm(ga + dr + 3 * f), mm(ha + ba + 3 * f));
+    ctx.strokeStyle = ctx.fillStyle = "#1d1d1f";
+    ctx.lineCap = ctx.lineJoin = "round";
+    for (const p of nordSolaire(lat, R)) {
+      if (p.t === "ligne" || p.t === "plein") {
+        ctx.beginPath();
+        p.pts.forEach(([x, y], i) => (i ? ctx.lineTo(cx + mm(x), cy + mm(y)) : ctx.moveTo(cx + mm(x), cy + mm(y))));
+        if (p.t === "plein") {
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          if (p.ferme) ctx.closePath();
+          ctx.lineWidth = mm(p.e);
+          ctx.stroke();
+        }
+      } else if (p.t === "disque") {
+        ctx.beginPath();
+        ctx.arc(cx + mm(p.x), cy + mm(p.y), mm(p.r), 0, 2 * Math.PI);
+        ctx.fill();
+      } else {
+        ctx.font = `${p.gras ? "600 " : ""}${mm(p.taille)}px -apple-system, "Helvetica Neue", Arial, sans-serif`;
+        ctx.textAlign = p.align;
+        ctx.fillText(p.s, cx + mm(p.x), cy + mm(p.y));
+      }
+    }
+    ctx.strokeStyle = "#28282a";
+    ctx.lineWidth = mm(0.3 * f);
+  }
 
   // Échelle graphique
   const mParMm = r.echelle / 1000;
@@ -565,6 +606,8 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     const e = emprise(r, centre);
     const legende = o.legende();
     const site = o.site()?.label ?? "";
+    // Latitude du nord solaire : celle du site, sinon le centre de la carte.
+    const lat = o.site()?.lat ?? o.map.getCenter().lat;
     if (!r.titre) r.titre = site ? `Plan de situation — ${site}` : "Plan de situation";
     let dpi = r.dpi;
     if (type === "png") {
@@ -582,7 +625,7 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         await rendre(o.arbres3d(), map, r, centre, pxW, pxH, (img, x, y) => {
           doc.addImage(img.toDataURL("image/jpeg", 0.9), "JPEG", g.marge + x / pxParMm, g.marge + y / pxParMm, img.width / pxParMm, img.height / pxParMm, undefined, "FAST");
         }, (f, t) => (etat.textContent = `Rendu de la carte : ${f}/${t}…`));
-        habillagePdf(doc, r, g, e.solW, legende, site);
+        habillagePdf(doc, r, g, e.solW, legende, site, lat);
         doc.save(nomFichier("pdf"));
       } else {
         const c = document.createElement("canvas");
@@ -593,7 +636,7 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         ctx.fillRect(0, 0, c.width, c.height);
         await rendre(o.arbres3d(), map, r, centre, pxW, pxH, (img, x, y) => ctx.drawImage(img, Math.round(g.marge * pxParMm) + x, Math.round(g.marge * pxParMm) + y),
           (f, t) => (etat.textContent = `Rendu de la carte : ${f}/${t}…`));
-        habillageCanvas(ctx, r, g, pxParMm, e.solW, legende, site);
+        habillageCanvas(ctx, r, g, pxParMm, e.solW, legende, site, lat);
         const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/png"));
         if (!blob) throw new Error("image trop grande");
         const a = document.createElement("a");

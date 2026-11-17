@@ -59,6 +59,9 @@ export function tuilesCosia(m: MillesimeCosia): string {
 /** Pas du carroyage Lambert-93 (m). */
 export const PAS_CARROYAGE = [50, 100, 200, 500] as const;
 
+/** Exagération du relief en 3D. */
+export const EXAGERATIONS = [1, 1.5, 2, 3] as const;
+
 export const FONDS = {
   plan: { titre: "Plan", tuiles: wmts(IGN_LAYERS.plan) },
   photo: { titre: "Photo", tuiles: wmts(IGN_LAYERS.ortho) },
@@ -68,6 +71,15 @@ export type Fond = keyof typeof FONDS;
 
 export const COUCHES: CoucheDef[] = [
   { id: "fond", famille: "Fond", titre: "Fond de carte", source: "IGN Plan / BD ORTHO®", active: true, opacite: 0.7 },
+  {
+    id: "relief",
+    famille: "Fond",
+    titre: "Relief",
+    source: "IGN RGE ALTI®",
+    active: false,
+    opacite: 0.4,
+    note: "En 3D, toutes les couches se posent sur le relief (exagération réglable) ; l'opacité règle l'ombrage, visible aussi en 2D. Les calculs d'ombres et d'heures de soleil au sol restent faits sur sol plat ; le relief lointain est dans le module Soleil.",
+  },
   {
     id: "cosia",
     famille: "Occupation du sol",

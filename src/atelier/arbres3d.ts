@@ -51,6 +51,8 @@ export function gabaritArbre(a: ArbreOsm): GabaritArbre {
 export interface CoucheArbres3D extends maplibregl.CustomLayerInterface {
   setArbres(arbres: ArbreOsm[], lat0: number, lon0: number): void;
   setOpacite(o: number): void;
+  /** Altitude du sol (m) sous chaque arbre quand le relief 3D est affiché ; null : sol plat. */
+  setSol(sol: ((lon: number, lat: number) => number | null) | null): void;
   /** Lumière solaire (azimut et hauteur en degrés, couleur) ; null : éclairage neutre par défaut. */
   setSoleil(s: { azimut: number; hauteur: number; couleur: number; intensite: number } | null): void;
 }
@@ -78,6 +80,8 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
 
   let origine = maplibregl.MercatorCoordinate.fromLngLat([0, 0], 0);
   let echelle = origine.meterInMercatorCoordinateUnits();
+  let derniers: { arbres: ArbreOsm[]; lat0: number; lon0: number } | null = null;
+  let sol: ((lon: number, lat: number) => number | null) | null = null;
 
   function vider(): void {
     for (const o of [...groupe.children]) {
@@ -115,7 +119,13 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
       renderer = null;
     },
 
+    setSol(f) {
+      sol = f;
+      if (derniers) couche.setArbres(derniers.arbres, derniers.lat0, derniers.lon0);
+    },
+
     setArbres(arbres, lat0, lon0) {
+      derniers = { arbres, lat0, lon0 };
       vider();
       origine = maplibregl.MercatorCoordinate.fromLngLat([lon0, lat0], 0);
       echelle = origine.meterInMercatorCoordinateUnits();
@@ -136,13 +146,14 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
         const r2 = alea(a.lat, a.lon, 2);
         const r3 = alea(a.lat, a.lon, 3);
         const { rayon, fut, sy, cy } = gabaritArbre(a);
+        const y0 = sol?.(a.lon, a.lat) ?? 0;
 
-        m4.compose(new THREE.Vector3(x, 0, z), q.identity(), new THREE.Vector3(1.2 + rayon * 0.08, fut + rayon * 0.5, 1.2 + rayon * 0.08));
+        m4.compose(new THREE.Vector3(x, y0, z), q.identity(), new THREE.Vector3(1.2 + rayon * 0.08, fut + rayon * 0.5, 1.2 + rayon * 0.08));
         troncs.setMatrixAt(i, m4);
 
         const forme = a.resineux ? parForme[2] : parForme[r3 < 0.55 ? 0 : 1];
         q.setFromAxisAngle(axeY, r1 * Math.PI * 2);
-        forme.items.push(new THREE.Matrix4().compose(new THREE.Vector3(x, cy, z), q.clone(), new THREE.Vector3(rayon, sy, rayon)));
+        forme.items.push(new THREE.Matrix4().compose(new THREE.Vector3(x, y0 + cy, z), q.clone(), new THREE.Vector3(rayon, sy, rayon)));
         forme.couleurs.push(new THREE.Color(VERTS[Math.floor(r2 * VERTS.length)]));
       });
       troncs.instanceMatrix.needsUpdate = true;

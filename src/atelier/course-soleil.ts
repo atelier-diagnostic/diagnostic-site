@@ -24,6 +24,8 @@ export interface CoucheCourseSoleil extends maplibregl.CustomLayerInterface {
   setOpacite(o: number): void;
   /** true : diagramme à plat (vue 2D) ; false : voûte en 3D. */
   setPlan(plan: boolean): void;
+  /** Altitude du sol au site (m), quand le relief 3D est affiché. */
+  setAltitude(z: number): void;
 }
 
 let aPlat = false;
@@ -182,6 +184,10 @@ export function creerCoucheCourseSoleil(id: string): CoucheCourseSoleil {
       moment = { date, heure };
       if (anneeChange) construireFixe();
       construireMobile();
+      map?.triggerRepaint();
+    },
+    setAltitude(z) {
+      fixe.position.y = mobile.position.y = z;
       map?.triggerRepaint();
     },
     setPlan(plan) {

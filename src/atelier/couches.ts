@@ -191,6 +191,15 @@ export const COUCHES: CoucheDef[] = [
     note: "Zones atteignables à pied depuis le point du site en 5, 10 et 15 minutes, sur le réseau de la BD TOPO® (service d'itinéraire de la Géoplateforme, profil piéton, vitesse de marche fixée par le service). Pente, feux et traversées non modélisés.",
   },
   {
+    id: "equipements",
+    famille: "Mobilité",
+    titre: "Équipements à 15 minutes",
+    source: "IGN BD TOPO® et OpenStreetMap, dans les isochrones IGN",
+    active: false,
+    opacite: 1,
+    note: "Ville du quart d'heure : équipements du quotidien atteignables à pied en 5, 10 ou 15 minutes. Équipements publics (enseignement, santé, sport, culture, espaces publics, mairies, postes) : BD TOPO® de l'IGN ; commerces alimentaires, pharmacies, médecins, aires de jeux, arrêts et vélos en libre-service : OpenStreetMap. Ces bases sont plus ou moins complètes selon les villes : un équipement absent ici peut exister. La présence compte, pas la capacité. Cliquer un point pour son nom.",
+  },
+  {
     id: "argiles",
     famille: "Risques · Nature",
     titre: "Argiles (retrait-gonflement)",

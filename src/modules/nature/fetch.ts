@@ -9,7 +9,8 @@
 import { fetchJson } from "../../api/client";
 import { OVERPASS, natureLayerUrl } from "../../api/endpoints";
 import type { SiteContext } from "../../core/types";
-import type { LatLon } from "../../core/geo";
+import { polygonAreaM2, pointInPolygon, distanceMeters, type LatLon } from "../../core/geo";
+import { analyserCosia, type CosiaResultat } from "../../core/cosia";
 
 /** Rayon minimal appliqué si l'utilisateur est en cadrage "Parcelle" : ce
  * module n'a de sens qu'à partir d'une échelle de voisinage. */
@@ -113,6 +114,42 @@ export interface NatureRaw {
   fetchFailed: boolean;
   protectedZones: ProtectedZoneItem[];
   protectedZonesFetchFailed: boolean;
+  /** Couverture du sol CoSIA (IGN) dans le cercle ; null si indisponible. */
+  cosia: CosiaResultat | null;
+  /** Règle 3-30-300 : espace vert d'au moins 1 ha à moins de 300 m ; null si non évalué. */
+  espaceVert300: { trouve: boolean; nom: string | null; surfaceHa: number | null; distanceM: number | null } | null;
+}
+
+/** Espace vert ≥ 1 ha à moins de 300 m (OpenStreetMap ; contours simples, sans les multipolygones). */
+async function fetchEspaceVert300(ctx: SiteContext): Promise<NatureRaw["espaceVert300"]> {
+  const q = `[out:json][timeout:25];(
+    way["leisure"~"^(park|garden|recreation_ground|nature_reserve)$"](around:300,${ctx.lat},${ctx.lon});
+    way["landuse"~"^(forest|recreation_ground|village_green)$"](around:300,${ctx.lat},${ctx.lon});
+    way["natural"="wood"](around:300,${ctx.lat},${ctx.lon});
+  );out geom;`;
+  try {
+    const data = await fetchJson<OverpassResponse>(`${OVERPASS}?data=${encodeURIComponent(q)}`, {
+      cacheKey: "overpass:espace-vert-300",
+      ttlMs: 30 * 24 * 60 * 60 * 1000,
+      timeoutMs: 25_000,
+      retries: 2,
+    });
+    let best: NonNullable<NatureRaw["espaceVert300"]> = { trouve: false, nom: null, surfaceHa: null, distanceM: null };
+    for (const el of data.elements) {
+      if (el.type !== "way" || !el.geometry || el.geometry.length < 4) continue;
+      const poly = el.geometry.map((p) => ({ lat: p.lat, lon: p.lon }));
+      const ha = polygonAreaM2(poly) / 10_000;
+      if (ha < 1) continue;
+      const site = { lat: ctx.lat, lon: ctx.lon };
+      const d = pointInPolygon(site, poly) ? 0 : Math.min(...poly.map((p) => distanceMeters(site, p)));
+      if (d > 300) continue;
+      if (!best.trouve || d < (best.distanceM ?? Infinity))
+        best = { trouve: true, nom: el.tags?.name ?? null, surfaceHa: Math.round(ha * 10) / 10, distanceM: Math.round(d) };
+    }
+    return best;
+  } catch {
+    return null;
+  }
 }
 
 function isGreenTag(tags: Record<string, string> = {}): boolean {
@@ -143,8 +180,12 @@ export async function fetchNature(ctx: SiteContext): Promise<NatureRaw> {
     out geom;
   `.trim();
 
-  const { zones: protectedZones, allFailed: protectedZonesFetchFailed } =
-    await fetchProtectedZones(ctx);
+  // CoSIA (IGN) et espace vert à 300 m : indépendants d'Overpass pour la verdure.
+  const [{ zones: protectedZones, allFailed: protectedZonesFetchFailed }, cosia, espaceVert300] = await Promise.all([
+    fetchProtectedZones(ctx),
+    analyserCosia(ctx.lat, ctx.lon, Math.max(r, 50)).catch(() => null),
+    fetchEspaceVert300(ctx),
+  ]);
 
   try {
     const url = `${OVERPASS}?data=${encodeURIComponent(query)}`;
@@ -183,6 +224,8 @@ export async function fetchNature(ctx: SiteContext): Promise<NatureRaw> {
       fetchFailed: false,
       protectedZones,
       protectedZonesFetchFailed,
+      cosia,
+      espaceVert300,
     };
   } catch {
     // Overpass indisponible/timeout : le module l'affichera explicitement,
@@ -196,6 +239,8 @@ export async function fetchNature(ctx: SiteContext): Promise<NatureRaw> {
       fetchFailed: true,
       protectedZones,
       protectedZonesFetchFailed,
+      cosia,
+      espaceVert300,
     };
   }
 }

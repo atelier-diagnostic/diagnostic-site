@@ -788,3 +788,24 @@ body[data-vue="atelier"] { overflow: hidden; }
 .at-quart tbody th { font-weight: 500; text-align: left; color: var(--ink-2); white-space: nowrap; }
 .at-quart tbody th i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
 .at-quart td { text-align: right; color: var(--ink); }
+
+/* Nature en ville : barre de couverture du sol, règle 3-30-300 */
+.sol-barre { display: flex; height: 18px; border-radius: 6px; overflow: hidden; margin: 6px 0 8px; background: var(--panel-2); }
+.sol-barre span { display: block; height: 100%; }
+.sol-barre span + span { box-shadow: inset 1px 0 0 rgba(255,255,255,0.9); }
+.sol-legende { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0; margin: 0 0 8px; font-size: 12px; color: var(--ink-2); }
+.sol-legende li { display: inline-flex; align-items: center; gap: 6px; }
+.sol-legende i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.sol-legende b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.regle-33 { list-style: none; padding: 0; margin: 4px 0 8px; display: grid; gap: 6px; font-size: 14px; }
+.regle-33 b { display: inline-block; min-width: 3.2em; font-weight: 700; }
+.pastille { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-right: 4px; }
+.pastille.ok { background: #dff3e6; color: #17663a; }
+.pastille.ko { background: #fbe4dc; color: #9b2d20; }
+.pastille.nd { background: var(--panel-2); color: var(--muted); }
+:root[data-theme="dark"] .pastille.ok { background: #17402a; color: #9be3b5; }
+:root[data-theme="dark"] .pastille.ko { background: #4a2018; color: #f4b3a3; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .pastille.ok { background: #17402a; color: #9be3b5; }
+  :root:not([data-theme="light"]) .pastille.ko { background: #4a2018; color: #f4b3a3; }
+}

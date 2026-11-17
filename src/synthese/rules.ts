@@ -91,6 +91,8 @@ const CATNAT_RECURRENT = 3; // arrêtés CatNat à moins de 1 km
 const VENT_FORT_MS = 5; // vitesse moyenne du secteur dominant (m/s)
 const VENT_NOTABLE_MS = 3.5;
 // Le calme (< 0,5 m/s) n'est pas un critère : ERA5, lissé sur ~30 km, n'en a presque jamais.
+const IMPERMEABLE_FORT_PCT = 70; // part du sol imperméabilisée (CoSIA)
+const IMPERMEABLE_MOYEN_PCT = 50;
 const VENT_FORT_FREQUENT_PCT = 10; // part des heures ≥ 8 m/s (29 km/h)
 // Mobilités
 const DENSITE_CYCLABLE_FAIBLE = 1; // km/km²
@@ -244,7 +246,12 @@ function regleEauPluviale(i: SyntheseInput): Enjeu {
   } else d.nonEvalues.push("Module Eau non disponible");
 
   if (i.nature) {
-    if (i.nature.greenPct < VEGETAL_FAIBLE_PCT)
+    const sol = i.nature.sol;
+    if (sol && sol.impermeabilisePct >= IMPERMEABLE_FORT_PCT)
+      s(d, "nature", 2, "Sols très imperméabilisés (ruissellement, désimperméabilisation à étudier)", `${sol.impermeabilisePct} % imperméabilisés (CoSIA)`);
+    else if (sol && sol.impermeabilisePct >= IMPERMEABLE_MOYEN_PCT)
+      s(d, "nature", 1, "Sols majoritairement imperméabilisés (ruissellement)", `${sol.impermeabilisePct} % imperméabilisés (CoSIA)`);
+    else if (!sol && i.nature.greenPct < VEGETAL_FAIBLE_PCT)
       s(d, "nature", 1, "Sols majoritairement imperméabilisés (ruissellement)", `${i.nature.greenPct} % végétalisé`);
   } else d.nonEvalues.push("Végétalisation non disponible (module Nature)");
 

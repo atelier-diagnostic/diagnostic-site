@@ -8,6 +8,7 @@ import { fetchBuildingsWithHeight, type BuildingSource } from "../../core/buildi
 import type { BuildingFootprint } from "../../core/osm-buildings";
 import type { LatLon } from "../../core/geo";
 import type { SiteContext } from "../../core/types";
+import { fetchRelief, type ReliefRaw } from "./relief";
 
 export const FALLBACK_RADIUS_M = 100; // les masques n'ont guère de sens à moins de 100 m
 export type { BuildingSource as HeightSource } from "../../core/buildings";
@@ -18,6 +19,8 @@ export interface SoleilRaw {
   heightSource: BuildingSource;
   trees: LatLon[];
   pv: PvRaw | null;
+  /** Horizon du relief (RGE ALTI) ; null si indisponible. */
+  relief: ReliefRaw | null;
 }
 
 export interface PvRaw {
@@ -115,11 +118,12 @@ async function fetchPv(ctx: SiteContext): Promise<PvRaw | null> {
 export async function fetchSoleil(ctx: SiteContext): Promise<SoleilRaw> {
   const r = ctx.radiusM ?? FALLBACK_RADIUS_M;
 
-  const [{ buildings, source: heightSource }, trees, pv] = await Promise.all([
+  const [{ buildings, source: heightSource }, trees, pv, relief] = await Promise.all([
     fetchBuildingsWithHeight(ctx, r),
     fetchTrees(ctx, r),
     fetchPv(ctx),
+    fetchRelief(ctx),
   ]);
 
-  return { effectiveRadiusM: r, buildings, heightSource, trees, pv };
+  return { effectiveRadiusM: r, buildings, heightSource, trees, pv, relief };
 }

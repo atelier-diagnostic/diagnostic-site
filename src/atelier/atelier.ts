@@ -21,8 +21,9 @@ import { sunAtLegalTime, formatHour } from "../map3d/sun";
 import {
   COUCHES, FAMILLES, FONDS, HAUTEURS, INCONNU, USAGES, USAGE_AUTRE, NEUTRE, COSIA, PAS_CARROYAGE, tuilesCosia,
   type CoucheDef, type Fond, type MillesimeCosia,
-  CLASSES_SOLEIL, EXAGERATIONS,
+  CLASSES_SOLEIL, EXAGERATIONS, PAS_COURBES,
 } from "./couches";
+import { calculerCourbes } from "./courbes";
 import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
@@ -137,6 +138,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   let millesime: MillesimeCosia = "2021-2023";
   let pas: (typeof PAS_CARROYAGE)[number] = 100;
   let exag: (typeof EXAGERATIONS)[number] = 1.5;
+  let pasCourbes: (typeof PAS_COURBES)[number] = "auto";
 
   // --- Gabarit ----------------------------------------------------------------
   const ligne = (c: CoucheDef) => {
@@ -158,6 +160,10 @@ export function createAtelier(root: HTMLElement): Atelier {
         : c.id === "relief"
           ? `<div class="segmented seg-sm" role="group" aria-label="Exagération du relief en 3D">
               ${EXAGERATIONS.map((v) => `<button type="button" data-exag="${v}" aria-pressed="${v === exag}">×${String(v).replace(".", ",")}</button>`).join("")}
+            </div>`
+        : c.id === "courbes"
+          ? `<div class="segmented seg-sm" role="group" aria-label="Équidistance des courbes">
+              ${PAS_COURBES.map((v) => `<button type="button" data-courbes="${v}" aria-pressed="${v === pasCourbes}">${v === "auto" ? "Auto" : `${v} m`}</button>`).join("")}
             </div>`
         : c.id === "carroyage"
           ? `<div class="segmented seg-sm" role="group" aria-label="Pas du carroyage">
@@ -265,6 +271,8 @@ export function createAtelier(root: HTMLElement): Atelier {
     container: canvasEl,
     style: {
       version: 8,
+      // Polices des étiquettes (cotes des courbes) : celles des styles vectoriels de l'IGN.
+      glyphs: "https://data.geopf.fr/annexes/ressources/vectorTiles/fonts/{fontstack}/{range}.pbf",
       sources: {
         plan: { type: "raster", tiles: [FONDS.plan.tuiles], tileSize: 256, maxzoom: 19, attribution: "© IGN" },
         photo: { type: "raster", tiles: [FONDS.photo.tuiles], tileSize: 256, maxzoom: 19, attribution: "© IGN" },
@@ -278,6 +286,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         "ombres-arbres": vecteur(),
         perimetre: vecteur(),
         carroyage: vecteur(),
+        courbes: vecteur(),
         // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
         // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
@@ -322,6 +331,35 @@ export function createAtelier(root: HTMLElement): Atelier {
           },
         },
         {
+          id: "courbes",
+          type: "line",
+          source: "courbes",
+          layout: { visibility: "none", "line-join": "round" },
+          paint: {
+            "line-color": "#6b4a2c",
+            "line-opacity": 0.85,
+            "line-width": ["case", ["get", "maitresse"], 1.7, 1],
+            "line-dasharray": [3, 2],
+          },
+        },
+        {
+          id: "courbes-cotes",
+          type: "symbol",
+          source: "courbes",
+          filter: ["get", "maitresse"],
+          layout: {
+            visibility: "none",
+            "symbol-placement": "line",
+            "symbol-spacing": 260,
+            "text-field": ["get", "label"],
+            "text-font": ["Source Sans Pro Regular"],
+            "text-size": 11,
+            "text-max-angle": 35,
+            "text-keep-upright": true,
+          },
+          paint: { "text-color": "#6b4e32", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
+        },
+        {
           id: "carroyage",
           type: "line",
           source: "carroyage",
@@ -361,6 +399,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "arbres") return ["arbres", "arbres-3d"];
     if (id === "repere") return [];
     if (id === "course") return ["course-3d"];
+    if (id === "courbes") return ["courbes", "courbes-cotes"];
     if (id === "ensoleillement") return ["ensoleillement"];
     return [id];
   }
@@ -387,8 +426,10 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (lid === "arbres-3d") coucheArbres.setOpacite(e.opacite);
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
+      if (lid === "courbes-cotes") map.setPaintProperty(lid, "text-opacity", e.opacite);
     }
     if (id === "relief") majTerrain();
+    if (id === "courbes" && e.actif) void dessinerCourbes();
     if (id === "repere" && marker) {
       const el = marker.getElement();
       el.style.display = e.actif ? "" : "none";
@@ -560,6 +601,39 @@ export function createAtelier(root: HTMLElement): Atelier {
       root.querySelectorAll("[data-exag]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       await pret;
       majTerrain();
+    }),
+  );
+
+  // --- Courbes de niveau -------------------------------------------------------------
+  let demandeCourbes = 0;
+  async function dessinerCourbes(): Promise<void> {
+    if (!site || !etat.get("courbes")!.actif) return;
+    const ctx = site;
+    const n = ++demandeCourbes;
+    etatCouche("courbes", "Calcul…");
+    try {
+      const demi = Math.min(1500, Math.max(400, (ctx.radiusM ?? 150) * 1.5));
+      const c = await calculerCourbes(ctx.lat, ctx.lon, demi, pasCourbes);
+      if (n !== demandeCourbes || site !== ctx) return;
+      (map.getSource("courbes") as maplibregl.GeoJSONSource).setData(c.geojson);
+      const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+      etatCouche(
+        "courbes",
+        c.geojson.features.length
+          ? `Équidistance ${fr(c.equidistance)} m · altitudes de ${fr(c.min)} à ${fr(c.max)} m sur un carré de ${fr((2 * demi) / 1000)} km de côté.`
+          : "Pas d'altitude disponible ici.",
+      );
+    } catch {
+      if (n === demandeCourbes) etatCouche("courbes", "Altitudes indisponibles (service de l'IGN). Réessayer en réactivant la couche.");
+    }
+  }
+  root.querySelectorAll<HTMLButtonElement>("[data-courbes]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const v = b.dataset.courbes!;
+      pasCourbes = (v === "auto" ? "auto" : Number(v)) as typeof pasCourbes;
+      root.querySelectorAll("[data-courbes]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      await pret;
+      void dessinerCourbes();
     }),
   );
 
@@ -846,6 +920,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     batimentsEnvoyes = false;
     for (const id of ["bati", "arbres", "vegetation", "ombres"]) if (etat.get(id)!.actif) void chargerCouche(id);
     if (etat.get("ensoleillement")!.actif) void chargerCouche("bati");
+    if (etat.get("courbes")!.actif) void dessinerCourbes();
   }
 
   void pret.then(() => {

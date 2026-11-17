@@ -1,0 +1,29 @@
+name: sonde-curl
+on: { push: { branches: [claude/sonde-api] } }
+jobs:
+  curl:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set +e
+          curl -s 'https://data.geopf.fr/wms-v/ows?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0' -o wmsv.xml
+          python3 - <<'PY'
+          import re
+          x=open('wmsv.xml',encoding='utf8',errors='ignore').read()
+          for n,t in re.findall(r'<Layer[^>]*>\s*<Name>([^<]+)</Name>\s*<Title>([^<]*)</Title>',x):
+              if re.search(r'patrim|monument|abord|site|spr|ac1|ac2|ac4|merim|class|inscri|protect',n+' '+t,re.I): print('WMSV',n,'|',t)
+          PY
+          curl -s 'https://data.geopf.fr/wfs/ows?SERVICE=WFS&REQUEST=GetCapabilities&VERSION=2.0.0' -o wfs.xml
+          python3 - <<'PY'
+          import re
+          x=open('wfs.xml',encoding='utf8',errors='ignore').read()
+          for n,t in re.findall(r'<FeatureType[^>]*>\s*<Name>([^<]+)</Name>\s*<Title>([^<]*)</Title>',x):
+              if re.search(r'patrim|monument|abord|site_|spr|ac1|ac2|ac4|merim|class|inscri|protect',n+' '+t,re.I): print('WFS',n,'|',t)
+          PY
+          echo '--- culture'
+          curl -s -D - 'https://data.culture.gouv.fr/api/explore/v2.1/catalog/datasets/liste-des-immeubles-proteges-au-titre-des-monuments-historiques/records?limit=3&where=within_distance(coordonnees_au_format_wgs84%2C%20geom%27POINT(5.369%2043.288)%27%2C%201km)' -H 'Origin: https://esope023.github.io' | head -c 3000
+          echo; echo '--- catalogue'
+          curl -s 'https://data.culture.gouv.fr/api/explore/v2.1/catalog/datasets?where=search(%22sites%20patrimoniaux%20remarquables%22)&limit=5&select=dataset_id' ; echo
+          curl -s 'https://data.culture.gouv.fr/api/explore/v2.1/catalog/datasets?where=search(%22monuments%20historiques%22)&limit=8&select=dataset_id' ; echo
+          echo '--- gpu sup ac1 wfs'
+          curl -s 'https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=wfs_sup:assiette_sup_s&OUTPUTFORMAT=application/json&COUNT=5&BBOX=43.28,5.36,43.30,5.38,urn:ogc:def:crs:EPSG::4326' | head -c 1500

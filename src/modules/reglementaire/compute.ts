@@ -3,6 +3,7 @@
 // administratifs plutôt qu'il ne les dérive — la transparence porte donc
 // surtout sur "quelle source a répondu", pas sur des seuils numériques.
 import type { ReglementaireRaw, RisqueSyntheseRaw, CatnatItem, SupItem } from "./fetch";
+import { genreDe, type GenrePatrimoine } from "../../core/patrimoine";
 
 export interface RisqueFlag {
   code: string;
@@ -33,6 +34,10 @@ export interface ReglementaireResult {
   /** null = source indisponible (≠ aucun arrêté). */
   catnatCount: number | null;
   catnatRecent: CatnatItem[];
+  /** Protections patrimoniales au point (servitudes AC1, AC2, AC4), null si les SUP n'ont pas répondu. */
+  patrimoineAuPoint: { genre: GenrePatrimoine; libelle: string }[] | null;
+  /** Monument historique le plus proche (≤ 1 km), null si aucun ou non lu. */
+  mhPlusProche: { nom: string; distanceM: number } | null;
   /** Rapport Géorisques complet pour l'adresse. */
   georisquesUrl: string | null;
   partialFailure: boolean;
@@ -95,6 +100,14 @@ export function computeReglementaire(raw: ReglementaireRaw): ReglementaireResult
     catnatRecent: [...(raw.catnat?.items ?? [])]
       .sort((a, b) => dateKey(b.date_debut_evt) - dateKey(a.date_debut_evt))
       .slice(0, 5),
+    patrimoineAuPoint:
+      raw.sup === null
+        ? null
+        : raw.sup.flatMap((x) => {
+            const g = genreDe(x.categorie ?? undefined, x.typeAssiette ?? undefined);
+            return g ? [{ genre: g, libelle: x.libelle ?? "" }] : [];
+          }),
+    mhPlusProche: raw.patrimoine?.plusProche ?? null,
     georisquesUrl: raw.risquesSynthese?.url ?? null,
     partialFailure: raw.partialFailure,
   };

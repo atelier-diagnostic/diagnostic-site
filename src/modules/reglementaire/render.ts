@@ -17,6 +17,30 @@ function statut(s: string | null): string {
   return fort ? `<strong>${esc(t)}</strong>` : esc(t);
 }
 
+const GENRE_TXT: Record<string, string> = {
+  mh: "sur un monument historique",
+  abords: "dans les abords d'un monument historique",
+  site: "dans un site classé ou inscrit",
+  spr: "dans un site patrimonial remarquable",
+};
+function patrimoineBlock(r: ReglementaireResult): string {
+  if (r.patrimoineAuPoint === null)
+    return `<p class="error">Protections patrimoniales non vérifiées : le Géoportail de l'Urbanisme n'a pas répondu.</p>`;
+  const proche = r.mhPlusProche
+    ? ` Monument historique le plus proche : <strong>${esc(r.mhPlusProche.nom)}</strong>, à ${r.mhPlusProche.distanceM} m.`
+    : "";
+  if (!r.patrimoineAuPoint.length)
+    return `<p>Aucune protection patrimoniale publiée au point (monument historique, abords, site, site patrimonial remarquable).${proche}</p>
+      <p class="module-note">Toutes les servitudes ne sont pas encore publiées sur le Géoportail de l'Urbanisme : à confirmer sur l'Atlas des patrimoines ou auprès de l'UDAP. Carte dans l'atelier, thème Patrimoine.</p>`;
+  const lignes = r.patrimoineAuPoint
+    .map((p) => `<li>Le site est ${GENRE_TXT[p.genre]}${p.libelle ? ` : <strong>${esc(p.libelle)}</strong>` : ""}.</li>`)
+    .join("");
+  const abf = r.patrimoineAuPoint.some((p) => p.genre !== "site")
+    ? `<p>Les travaux y sont soumis à l'Architecte des Bâtiments de France (UDAP) : à associer tôt au projet.</p>`
+    : `<p>En site classé, les travaux relèvent d'une autorisation spéciale (ministre ou préfet) ; en site inscrit, d'une déclaration préalable avec avis de l'ABF.</p>`;
+  return `<ul class="reg-list">${lignes}</ul>${abf}<p class="module-note">${proche.trim()} Carte dans l'atelier, thème Patrimoine.</p>`;
+}
+
 export function renderReglementaire(el: HTMLElement, r: ReglementaireResult): void {
   const zonageBlock = r.isRnu
     ? `<p><strong>Règlement National d'Urbanisme (RNU)</strong> — cette commune n'a pas de PLU
@@ -107,6 +131,9 @@ export function renderReglementaire(el: HTMLElement, r: ReglementaireResult): vo
 
     <h3 class="module-subtitle">Servitudes d'utilité publique</h3>
     ${supBlock}
+
+    <h3 class="module-subtitle">Patrimoine protégé</h3>
+    ${patrimoineBlock(r)}
 
     <h3 class="module-subtitle">Retrait-gonflement des argiles (RGA)</h3>
     <p>${r.rgaExposition ? `Niveau : <strong>${esc(r.rgaExposition)}</strong> (code ${esc(r.rgaCode ?? "n.d.")}).` : "Donnée non disponible."}

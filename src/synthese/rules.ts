@@ -377,6 +377,13 @@ function regleReglementaire(i: SyntheseInput): Enjeu {
       s(d, "reglementaire", 2, "Zone naturelle ou agricole : constructibilité très restreinte", `zone ${r.zonageLibelle ?? r.zonageType}`);
     else if (r.zonageType && r.zonageType.startsWith("AU"))
       s(d, "reglementaire", 1, "Zone à urbaniser (extension : enjeu ZAN, conditions d'ouverture)", `zone ${r.zonageLibelle ?? r.zonageType}`);
+    const pat = r.patrimoineAuPoint ?? [];
+    if (pat.some((p) => p.genre === "mh" || p.genre === "spr"))
+      s(d, "reglementaire", 2, "Monument historique ou site patrimonial remarquable : Architecte des Bâtiments de France", pat.map((p) => p.libelle).filter(Boolean).join(", ") || "servitude AC1 / AC4");
+    else if (pat.some((p) => p.genre === "abords"))
+      s(d, "reglementaire", 2, "Abords de monument historique : travaux soumis à l'Architecte des Bâtiments de France", pat.find((p) => p.genre === "abords")?.libelle || "servitude AC1");
+    else if (pat.some((p) => p.genre === "site"))
+      s(d, "reglementaire", 2, "Site classé ou inscrit : autorisation spéciale ou avis de l'ABF", pat.find((p) => p.genre === "site")?.libelle || "servitude AC2");
     if (r.supCount === null) d.nonEvalues.push("Servitudes (GPU) indisponibles");
     else if (r.supCount >= SUP_NOMBREUSES)
       s(d, "reglementaire", 2, "Servitudes d'utilité publique multiples", `${r.supCount} SUP sur le point`);

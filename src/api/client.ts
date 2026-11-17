@@ -46,6 +46,13 @@ async function once<T>(url: string, timeoutMs: number, outer?: AbortSignal): Pro
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     if (!res.ok) {
+      // Le WFS de la Géoplateforme répond 400 quand sa base est saturée
+      // (« Unable to obtain connection ») : c'est une surcharge passagère,
+      // traitée comme un 503 pour être retentée.
+      if (res.status === 400 && /data\.geopf\.fr\/wfs/.test(url)) {
+        const texte = await res.text().catch(() => "");
+        if (/obtain connection|Timeout waiting/i.test(texte)) throw new ApiError(`IGN saturé sur ${url}`, 503, url);
+      }
       throw new ApiError(`HTTP ${res.status} sur ${url}`, res.status, url);
     }
     return (await res.json()) as T;

@@ -7,7 +7,7 @@
 
 import { IGN_WMTS, IGN_LAYERS } from "../api/endpoints";
 
-export type Famille = "Fond" | "Occupation du sol" | "Parcelles" | "Bâti" | "Végétation" | "Soleil" | "Urbanisme" | "Mobilité" | "Risques · Nature" | "Repères";
+export type Famille = "Fond" | "Occupation du sol" | "Parcelles" | "Bâti" | "Végétation" | "Soleil" | "Urbanisme" | "Patrimoine" | "Mobilité" | "Risques · Nature" | "Repères";
 
 export interface CoucheDef {
   id: string;
@@ -182,6 +182,41 @@ export const COUCHES: CoucheDef[] = [
     tuiles: wms(WMS_V, "sup"),
   },
   {
+    id: "patrimoine-mh",
+    famille: "Patrimoine",
+    titre: "Monuments historiques et abords",
+    source: "Géoportail de l'Urbanisme (servitudes AC1)",
+    active: false,
+    opacite: 0.8,
+    note: "Édifices protégés (rouge) et leurs abords (tirets), tels que publiés en servitudes sur le Géoportail de l'Urbanisme. Dans les abords, les travaux sont soumis à l'Architecte des Bâtiments de France. Toutes les servitudes ne sont pas encore publiées : une absence ici est à vérifier sur l'Atlas des patrimoines ou auprès de l'UDAP.",
+  },
+  {
+    id: "patrimoine-sites",
+    famille: "Patrimoine",
+    titre: "Sites classés et inscrits",
+    source: "Géoportail de l'Urbanisme (servitudes AC2)",
+    active: false,
+    opacite: 0.6,
+  },
+  {
+    id: "patrimoine-spr",
+    famille: "Patrimoine",
+    titre: "Sites patrimoniaux remarquables",
+    source: "Géoportail de l'Urbanisme (servitudes AC4)",
+    active: false,
+    opacite: 0.6,
+    note: "Anciens secteurs sauvegardés, ZPPAUP et AVAP, réunis depuis 2016 sous le nom de sites patrimoniaux remarquables.",
+  },
+  {
+    id: "unesco",
+    famille: "Patrimoine",
+    titre: "Patrimoine mondial (UNESCO)",
+    source: "IGN",
+    active: false,
+    opacite: 0.6,
+    tuiles: wms(WMS_V, "IGNF_SITES-UNESCO"),
+  },
+  {
     id: "isochrones",
     famille: "Mobilité",
     titre: "Isochrones à pied",
@@ -223,7 +258,7 @@ export const COUCHES: CoucheDef[] = [
   { id: "carroyage", famille: "Repères", titre: "Carroyage", source: "Lambert-93 (RGF93)", active: false, opacite: 0.45 },
 ];
 
-export const FAMILLES: Famille[] = ["Fond", "Occupation du sol", "Parcelles", "Bâti", "Végétation", "Soleil", "Urbanisme", "Mobilité", "Risques · Nature", "Repères"];
+export const FAMILLES: Famille[] = ["Fond", "Occupation du sol", "Parcelles", "Bâti", "Végétation", "Soleil", "Urbanisme", "Patrimoine", "Mobilité", "Risques · Nature", "Repères"];
 
 /** Classes de hauteur (m) : rampe séquentielle claire → foncée. */
 export const HAUTEURS = [

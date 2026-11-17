@@ -41,6 +41,16 @@ export const reglementaireModule: DiagnosticModule<ReglementaireRaw, Reglementai
       indicators: [
         { label: "Zonage", value: result.isRnu ? "RNU" : result.zonageLibelle ?? "n.d." },
         { label: "Servitudes (SUP)", value: `${result.supCount ?? "n.d."}` },
+        {
+          label: "Patrimoine protégé au point",
+          value:
+            result.patrimoineAuPoint === null
+              ? "n.d."
+              : result.patrimoineAuPoint.length
+                ? result.patrimoineAuPoint.map((p) => ({ mh: "monument historique", abords: "abords de MH", site: "site classé/inscrit", spr: "SPR" })[p.genre] + (p.libelle ? ` (${p.libelle})` : "")).join(" ; ")
+                : "aucune protection publiée",
+        },
+        ...(result.mhPlusProche ? [{ label: "Monument historique le plus proche", value: `${result.mhPlusProche.nom}, ${result.mhPlusProche.distanceM} m` }] : []),
         { label: "Exposition RGA", value: result.rgaExposition ?? "n.d." },
         {
           label: "Risques existants à l'adresse (Géorisques)",

@@ -12,6 +12,7 @@ import {
   georisquesSynthese,
   georisquesCatnat,
 } from "../../api/endpoints";
+import { fetchPatrimoine, corrigerTexte, type Patrimoine } from "../../core/patrimoine";
 import type { SiteContext } from "../../core/types";
 import { pointInPolygon } from "../../core/geo";
 
@@ -19,22 +20,7 @@ function sitePoint(ctx: SiteContext) {
   return { type: "Point", coordinates: [ctx.lon, ctx.lat] };
 }
 
-/**
- * Corrige un mojibake UTF-8 relu en Latin-1 (ex. "HÃ´tel" -> "Hôtel"),
- * constaté sur les libellés de l'endpoint SUP de l'API Carto (les autres
- * endpoints GPU renvoient un encodage correct). Sans effet si la chaîne est
- * déjà bien encodée : le round-trip échoue silencieusement et on garde
- * l'original plutôt que de risquer de la corrompre.
- */
-function fixMojibake(s: string): string {
-  if (!/[ÃÂ][\x80-\xBF]/.test(s)) return s;
-  try {
-    const bytes = Uint8Array.from(s, (c) => c.charCodeAt(0));
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return s;
-  }
-}
+const fixMojibake = corrigerTexte;
 
 // --- Zonage PLU --------------------------------------------------------------
 export interface ZonageFeatureProps {
@@ -288,18 +274,21 @@ export interface ReglementaireRaw {
   rga: RgaResult | null;
   risquesSynthese: RisqueSyntheseRaw | null;
   catnat: CatnatRaw | null;
+  /** Monument historique le plus proche (servitudes AC1 du GPU, 1 km) ; null si non lu. */
+  patrimoine: Patrimoine | null;
   /** true si un souci technique a touché au moins une source (affiché, pas cause de blocage). */
   partialFailure: boolean;
 }
 
 export async function fetchReglementaire(ctx: SiteContext): Promise<ReglementaireRaw> {
-  const [zonageRaw, isRnu, sup, rga, risquesSynthese, catnat] = await Promise.all([
+  const [zonageRaw, isRnu, sup, rga, risquesSynthese, catnat, patrimoine] = await Promise.all([
     fetchZonage(ctx),
     fetchIsRnu(ctx),
     fetchSup(ctx),
     fetchRga(ctx),
     fetchRisquesSynthese(ctx),
     fetchCatnat(ctx),
+    fetchPatrimoine(ctx.lat, ctx.lon, 1000).catch(() => null),
   ]);
 
   const zonageFailed = zonageRaw === undefined;
@@ -309,5 +298,5 @@ export async function fetchReglementaire(ctx: SiteContext): Promise<Reglementair
   const partialFailure =
     zonageFailed || rga === null || risquesSynthese === null || catnat === null || sup === null;
 
-  return { zonage, zonageFailed, isRnu, documentUrl, sup, rga, risquesSynthese, catnat, partialFailure };
+  return { zonage, zonageFailed, isRnu, documentUrl, sup, rga, risquesSynthese, catnat, patrimoine, partialFailure };
 }

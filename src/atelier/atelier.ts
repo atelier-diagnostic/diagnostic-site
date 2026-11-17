@@ -26,6 +26,7 @@ import {
 import { calculerCourbes } from "./courbes";
 import { calculerIsochrones, DUREES_MIN, COULEURS_ISO } from "./isochrones";
 import { recenserEquipements, FONCTIONS } from "./equipements";
+import { fetchPatrimoine } from "../core/patrimoine";
 
 const CLE_REPLIEES = "atelier:themes-replies";
 import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
@@ -308,6 +309,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         courbes: vecteur(),
         isochrones: vecteur(),
         equipements: vecteur(),
+        patrimoine: vecteur(),
         // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
         // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
@@ -379,6 +381,30 @@ export function createAtelier(root: HTMLElement): Atelier {
             "circle-stroke-width": 1,
             "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 1.5, 17, 4, 19, 9],
           },
+        },
+        // Patrimoine : du plus étendu (dessous) au plus précis (dessus).
+        { id: "patrimoine-spr", type: "fill", source: "patrimoine", filter: ["==", ["get", "genre"], "spr"], layout: { visibility: "none" }, paint: { "fill-color": "#6b4fa8", "fill-opacity": 0.6 } },
+        { id: "patrimoine-spr-ligne", type: "line", source: "patrimoine", filter: ["==", ["get", "genre"], "spr"], layout: { visibility: "none" }, paint: { "line-color": "#6b4fa8", "line-width": 1.6 } },
+        { id: "patrimoine-sites", type: "fill", source: "patrimoine", filter: ["==", ["get", "genre"], "site"], layout: { visibility: "none" }, paint: { "fill-color": "#3d7a3a", "fill-opacity": 0.6 } },
+        { id: "patrimoine-sites-ligne", type: "line", source: "patrimoine", filter: ["==", ["get", "genre"], "site"], layout: { visibility: "none" }, paint: { "line-color": "#3d7a3a", "line-width": 1.4 } },
+        { id: "patrimoine-abords", type: "line", source: "patrimoine", filter: ["==", ["get", "genre"], "abords"], layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": "#c4553f", "line-width": 1.1, "line-opacity": 0.65, "line-dasharray": [3, 2] } },
+        { id: "patrimoine-mh", type: "fill", source: "patrimoine", filter: ["==", ["get", "genre"], "mh"], layout: { visibility: "none" }, paint: { "fill-color": "#9b2d20", "fill-opacity": 0.8, "fill-outline-color": "#6e1d14" } },
+        {
+          id: "patrimoine-noms",
+          type: "symbol",
+          source: "patrimoine",
+          filter: ["==", ["get", "genre"], "mh"],
+          minzoom: 15,
+          layout: {
+            visibility: "none",
+            "text-field": ["get", "nom"],
+            "text-font": ["Source Sans Pro Regular"],
+            "text-size": 10.5,
+            "text-max-width": 9,
+            "text-offset": [0, 1.1],
+            "text-optional": true,
+          },
+          paint: { "text-color": "#7a2318", "text-halo-color": "rgba(255,255,255,0.92)", "text-halo-width": 1.5 },
         },
         {
           id: "equipements",
@@ -465,6 +491,9 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "courbes") return ["courbes", "courbes-cotes"];
     if (id === "isochrones") return ["isochrones", "isochrones-ligne", "isochrones-cotes"];
     if (id === "equipements") return ["equipements"];
+    if (id === "patrimoine-mh") return ["patrimoine-abords", "patrimoine-mh", "patrimoine-noms"];
+    if (id === "patrimoine-sites") return ["patrimoine-sites", "patrimoine-sites-ligne"];
+    if (id === "patrimoine-spr") return ["patrimoine-spr", "patrimoine-spr-ligne"];
     if (id === "ensoleillement") return ["ensoleillement"];
     return [id];
   }
@@ -488,7 +517,10 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLayoutProperty(lid, "visibility", visible ? "visible" : "none");
       const prop = PROP[layer.type];
       // Isochrones : la réglette règle le remplissage ; les contours restent nets.
-      if (prop && lid !== "isochrones-ligne") map.setPaintProperty(lid, prop, e.opacite);
+      // Patrimoine : aplats légers pour les sites et SPR, contours et noms toujours nets.
+      const aplatLeger = lid === "patrimoine-sites" || lid === "patrimoine-spr";
+      const net = lid === "isochrones-ligne" || lid === "patrimoine-abords" || lid.endsWith("-ligne") || lid === "patrimoine-noms";
+      if (prop && !net) map.setPaintProperty(lid, prop, aplatLeger ? e.opacite * 0.3 : e.opacite);
       if (lid === "arbres-3d") coucheArbres.setOpacite(e.opacite);
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
@@ -499,6 +531,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "courbes" && e.actif) void dessinerCourbes();
     if (id === "isochrones" && e.actif) void dessinerIsochrones();
     if (id === "equipements" && e.actif) void dessinerEquipements();
+    if (id.startsWith("patrimoine-") && e.actif) void dessinerPatrimoine();
     if (id === "repere" && marker) {
       const el = marker.getElement();
       el.style.display = e.actif ? "" : "none";
@@ -802,6 +835,48 @@ export function createAtelier(root: HTMLElement): Atelier {
   map.on("mouseenter", "equipements", () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", "equipements", () => (map.getCanvas().style.cursor = ""));
 
+  // --- Patrimoine (servitudes AC1, AC2, AC4 du GPU) -----------------------------------
+  let patrimoinePour: SiteContext | null = null;
+  async function dessinerPatrimoine(): Promise<void> {
+    if (!site || patrimoinePour === site) return;
+    const ctx = site;
+    patrimoinePour = ctx;
+    const ids = ["patrimoine-mh", "patrimoine-sites", "patrimoine-spr"];
+    ids.forEach((c) => etatCouche(c, "Chargement…"));
+    try {
+      const demi = Math.min(2000, Math.max(800, (ctx.radiusM ?? 150) + 600));
+      const r = await fetchPatrimoine(ctx.lat, ctx.lon, demi);
+      if (site !== ctx) return;
+      (map.getSource("patrimoine") as maplibregl.GeoJSONSource).setData(r.geojson);
+      const n = (g: string) => r.geojson.features.filter((f) => f.properties?.genre === g).length;
+      const km = (demi * 2) / 1000;
+      const zone = `sur un carré de ${km.toLocaleString("fr-FR")} km de côté`;
+      etatCouche(
+        "patrimoine-mh",
+        n("mh")
+          ? `${n("mh")} monument(s) historique(s) ${zone}` + (r.plusProche ? `, le plus proche à ${r.plusProche.distanceM} m (${r.plusProche.nom}).` : ".")
+          : `Aucun monument historique publié ${zone} (publication sur le GPU encore incomplète).`,
+      );
+      etatCouche("patrimoine-sites", n("site") ? `${n("site")} site(s) ${zone}.` : `Aucun site classé ou inscrit publié ${zone}.`);
+      etatCouche("patrimoine-spr", n("spr") ? `${n("spr")} périmètre(s) ${zone}.` : `Aucun site patrimonial remarquable publié ${zone}.`);
+    } catch {
+      patrimoinePour = null;
+      if (site === ctx) ids.forEach((c) => etatCouche(c, "Géoportail de l'Urbanisme indisponible. Réessayer en réactivant la couche."));
+    }
+  }
+  for (const lid of ["patrimoine-mh", "patrimoine-abords", "patrimoine-sites", "patrimoine-spr"]) {
+    map.on("click", lid, (ev) => {
+      const f = ev.features?.[0];
+      if (!f) return;
+      const pr = f.properties as { nom: string; titre: string; type: string };
+      const esc = (t: string) => t.replace(/[<>&]/g, "");
+      new maplibregl.Popup({ closeButton: false, maxWidth: "260px" })
+        .setLngLat(ev.lngLat)
+        .setHTML(`<strong>${esc(pr.nom || "Sans nom")}</strong><br>${esc(pr.titre)}${pr.type && pr.type !== pr.titre ? ` · ${esc(pr.type)}` : ""}<br><small>Géoportail de l'Urbanisme</small>`)
+        .addTo(map);
+    });
+  }
+
   // --- Carroyage Lambert-93 ----------------------------------------------------------
   function dessinerCarroyage(): void {
     if (!site) return;
@@ -1088,6 +1163,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (etat.get("courbes")!.actif) void dessinerCourbes();
     if (etat.get("isochrones")!.actif) void dessinerIsochrones();
     if (etat.get("equipements")!.actif) void dessinerEquipements();
+    if (["patrimoine-mh", "patrimoine-sites", "patrimoine-spr"].some((c) => etat.get(c)!.actif)) void dessinerPatrimoine();
   }
 
   void pret.then(() => {

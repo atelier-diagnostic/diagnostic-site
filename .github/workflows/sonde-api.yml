@@ -40,7 +40,7 @@ jobs:
             const vue = async (nom, zoom, pitch, bearing) => {
               await p.evaluate(([z, pt, br]) => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: z, pitch: pt, bearing: br }); }, [zoom, pitch, bearing]);
               await p.waitForTimeout(9000);
-              log(nom, JSON.stringify(await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); return { terrain: m.getTerrain(), alt: m.queryTerrainElevation ? m.queryTerrainElevation(c) : null, hill: m.getLayoutProperty('relief','visibility') }; })));
+              log(nom, JSON.stringify(await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); return { bati: (m.getSource('bati')?._data?.features || m.getSource('bati')?.serialize?.().data?.features || []).length, etatBati: document.querySelector('[data-couche="bati"] .at-etat')?.textContent, terrain: m.getTerrain(), alt: m.queryTerrainElevation ? m.queryTerrainElevation(c) : null, hill: m.getLayoutProperty('relief','visibility') }; })));
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
             };
             await p.evaluate(() => { const cb = document.querySelector('[data-couche="relief"] .switch'); cb.click(); });

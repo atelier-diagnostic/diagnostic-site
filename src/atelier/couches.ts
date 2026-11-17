@@ -7,7 +7,7 @@
 
 import { IGN_WMTS, IGN_LAYERS } from "../api/endpoints";
 
-export type Famille = "Fond" | "Occupation du sol" | "Parcelles" | "Bâti" | "Végétation" | "Soleil" | "Urbanisme" | "Risques · Nature" | "Repères";
+export type Famille = "Fond" | "Occupation du sol" | "Parcelles" | "Bâti" | "Végétation" | "Soleil" | "Urbanisme" | "Mobilité" | "Risques · Nature" | "Repères";
 
 export interface CoucheDef {
   id: string;
@@ -182,6 +182,15 @@ export const COUCHES: CoucheDef[] = [
     tuiles: wms(WMS_V, "sup"),
   },
   {
+    id: "isochrones",
+    famille: "Mobilité",
+    titre: "Isochrones à pied",
+    source: "IGN, calcul d'itinéraire (BD TOPO®)",
+    active: false,
+    opacite: 0.35,
+    note: "Zones atteignables à pied depuis le point du site en 5, 10 et 15 minutes, sur le réseau de la BD TOPO® (service d'itinéraire de la Géoplateforme, profil piéton, vitesse de marche fixée par le service). Pente, feux et traversées non modélisés.",
+  },
+  {
     id: "argiles",
     famille: "Risques · Nature",
     titre: "Argiles (retrait-gonflement)",
@@ -205,7 +214,7 @@ export const COUCHES: CoucheDef[] = [
   { id: "carroyage", famille: "Repères", titre: "Carroyage", source: "Lambert-93 (RGF93)", active: false, opacite: 0.45 },
 ];
 
-export const FAMILLES: Famille[] = ["Fond", "Occupation du sol", "Parcelles", "Bâti", "Végétation", "Soleil", "Urbanisme", "Risques · Nature", "Repères"];
+export const FAMILLES: Famille[] = ["Fond", "Occupation du sol", "Parcelles", "Bâti", "Végétation", "Soleil", "Urbanisme", "Mobilité", "Risques · Nature", "Repères"];
 
 /** Classes de hauteur (m) : rampe séquentielle claire → foncée. */
 export const HAUTEURS = [

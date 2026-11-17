@@ -60,7 +60,16 @@ async function creneau<T>(f: () => Promise<T>): Promise<T> {
 
 async function charger(url: string): Promise<Float32Array> {
   for (let essai = 0; ; essai++) {
-    const rep = await creneau(() => fetch(url));
+    let rep: Response;
+    try {
+      // Délai de 20 s ; aux nouvelles tentatives, on contourne le cache HTTP
+      // (une réponse d'erreur peut y être gardée).
+      rep = await creneau(() => fetch(url, { signal: AbortSignal.timeout(20_000), cache: essai ? "reload" : "default" }));
+    } catch (e) {
+      if (essai >= 3) throw e;
+      await attendre([600, 1500, 3500][essai]);
+      continue;
+    }
     if (rep.ok) {
       const buf = await rep.arrayBuffer();
       if (buf.byteLength < TAILLE * TAILLE * 4) throw new Error("Relief IGN : réponse inattendue");

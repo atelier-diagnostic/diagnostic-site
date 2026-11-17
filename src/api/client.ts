@@ -38,13 +38,15 @@ const DEFAULT_TTL = 30 * 24 * 60 * 60 * 1000; // 30 jours
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function once<T>(url: string, timeoutMs: number, outer?: AbortSignal): Promise<T> {
+async function once<T>(url: string, timeoutMs: number, outer?: AbortSignal, recharger = false): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const onOuterAbort = () => ctrl.abort();
   outer?.addEventListener("abort", onOuterAbort);
   try {
-    const res = await fetch(url, { signal: ctrl.signal });
+    // « reload » : contourner le cache HTTP du navigateur, qui garde parfois
+    // une réponse d'erreur de l'IGN (400 de surcharge) et la resservirait.
+    const res = await fetch(url, { signal: ctrl.signal, cache: recharger ? "reload" : "default" });
     if (!res.ok) {
       // Le WFS de la Géoplateforme répond 400 quand sa base est saturée
       // (« Unable to obtain connection ») : c'est une surcharge passagère,
@@ -113,7 +115,7 @@ async function withRetries<T>(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await once<T>(url, timeoutMs);
+      return await once<T>(url, timeoutMs, undefined, attempt > 1);
     } catch (err) {
       lastErr = err;
       // On ne retente pas les erreurs client 4xx (sauf 429).

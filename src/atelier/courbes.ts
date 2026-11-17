@@ -28,6 +28,8 @@ export interface Courbes {
   equidistance: number;
   min: number;
   max: number;
+  /** Tuiles d'altitudes non obtenues (courbes incomplètes). */
+  manquantes: number;
 }
 
 /** Équidistance automatique : la plus petite donnant au plus ~20 courbes. */
@@ -48,6 +50,8 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
   const W = nTx * TAILLE_TUILE, H = nTy * TAILLE_TUILE;
   let z = new Float32Array(W * H);
 
+  z.fill(NaN);
+  let manquantes = 0;
   const tuiles: Promise<void>[] = [];
   for (let ty = y0; ty <= y1; ty++)
     for (let tx = x0; tx <= x1; tx++)
@@ -59,9 +63,12 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
               const v = a[j * TAILLE_TUILE + i];
               z[(oy + j) * W + ox + i] = Number.isFinite(v) && v > -1000 && v < 9000 ? v : NaN;
             }
+        }, () => {
+          manquantes++; // une tuile refusée : on trace le reste plutôt que rien
         }),
       );
   await Promise.all(tuiles);
+  if (manquantes === tuiles.length) throw new Error("Altitudes IGN indisponibles");
 
   // Lissage : deux passes de moyenne 3 × 3 (les valeurs manquantes sont ignorées).
   for (let passe = 0; passe < 2; passe++) {
@@ -98,7 +105,7 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
       if (v < min) min = v;
       if (v > max) max = v;
     }
-  if (!Number.isFinite(min)) return { geojson: { type: "FeatureCollection", features: [] }, equidistance: 0, min: 0, max: 0 };
+  if (!Number.isFinite(min)) return { geojson: { type: "FeatureCollection", features: [] }, equidistance: 0, min: 0, max: 0, manquantes };
   const eq = equidistance === "auto" ? equidistanceAuto(min, max) : equidistance;
 
   // Point d'une arête : centre de pixel (i + 0,5, j + 0,5) en Mercator, puis lon/lat.
@@ -117,7 +124,7 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
       });
     }
   }
-  return { geojson: { type: "FeatureCollection", features }, equidistance: eq, min, max };
+  return { geojson: { type: "FeatureCollection", features }, equidistance: eq, min, max, manquantes };
 }
 
 /** Carrés marchants : lignes de cote h, en coordonnées de grille (i, j). */

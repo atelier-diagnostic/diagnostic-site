@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/quart-heure }
+        with: { ref: claude/patrimoine }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -28,7 +28,7 @@ jobs:
             const c = await b.newContext({ viewport:{width:1200,height:820} }); const p = await c.newPage();
             p.on('pageerror', e => log('pageerror', e.message.slice(0,300)));
             await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
-            await p.fill('#search-input', 'rue vauvenargues 13007 marseille');
+            await p.fill('#search-input', 'place de la republique 13200 arles');
             await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
             await p.keyboard.press('Enter');
             await p.waitForSelector('.map-atelier:not([hidden])', {timeout:60000});
@@ -43,17 +43,14 @@ jobs:
               log(nom, JSON.stringify(await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); return { bati: (m.getSource('bati')?._data?.features || m.getSource('bati')?.serialize?.().data?.features || []).length, etatBati: document.querySelector('[data-couche="bati"] .at-etat')?.textContent, terrain: m.getTerrain(), alt: m.queryTerrainElevation ? m.queryTerrainElevation(c) : null, hill: m.getLayoutProperty('relief','visibility') }; })));
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
             };
-            await p.evaluate(() => { document.querySelector('[data-couche="isochrones"] .switch').click(); document.querySelector('[data-couche="equipements"] .switch').click(); });
-            await p.waitForFunction(() => /ha|indisponible/.test(document.querySelector('[data-couche="isochrones"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
-            log('iso', await p.evaluate(() => document.querySelector('[data-couche="isochrones"] .at-etat')?.textContent));
-            await p.waitForFunction(() => /fonction|indisponibles/.test(document.querySelector('[data-couche="equipements"] .at-etat')?.textContent||''), null, {timeout:120000}).catch(e=>log('attente', e.message.split('\n')[0]));
-            log('equip', await p.evaluate(() => { const e = document.querySelector('[data-couche="equipements"] .at-etat'); return [e?.closest('.at-couche')?.className, getComputedStyle(e).display, e.hidden, e.innerText || e.textContent].join(' ## '); }));
-            await p.locator('[data-couche="equipements"]').screenshot({ path:'shots/equip-panneau.jpg', quality:80 }).catch(e=>log('capture', e.message.split('\n')[0]));
-            await p.evaluate(() => { for (const f of ['Occupation du sol','Soleil','Urbanisme','Risques · Nature']) document.querySelector(`[data-famille="${f}"] .at-famille-btn`).click(); });
-            log('replies', await p.evaluate(() => [...document.querySelectorAll('.at-famille')].map(s=>s.dataset.famille+':'+(s.classList.contains('repliee')?'R':'O')+':'+s.querySelector('.at-famille-n').textContent).join(' | ')));
-            await p.locator('.at-panneau, .at-couches, aside').first().screenshot({ path:'shots/panneau.jpg', quality:72 }).catch(e=>log('capture', e.message.split('\n')[0]));
+            for (const c of ['patrimoine-mh','patrimoine-sites','patrimoine-spr']) await p.evaluate((c) => document.querySelector(`[data-couche="${c}"] .switch`).click(), c);
+            await p.evaluate(() => document.querySelector('[data-couche="cadastre"] .switch').click());
+            await p.waitForFunction(() => /monument|Aucun|indisponible/.test(document.querySelector('[data-couche="patrimoine-mh"] .at-etat')?.textContent||''), null, {timeout:90000}).catch(e=>log('attente', e.message.split('\n')[0]));
+            for (const c of ['patrimoine-mh','patrimoine-sites','patrimoine-spr']) log('pat', c, await p.evaluate((c) => document.querySelector(`[data-couche="${c}"] .at-etat`)?.textContent, c));
             await p.click('.at-replier').catch(()=>{});
-            await p.evaluate(() => { document.querySelector('[data-couche="isochrones"] .switch').click(); document.querySelector('[data-couche="cadastre"] .switch').click(); }); await vue('equip-2d', 15, 0, 0);
+            await vue('pat-2d', 15.3, 0, 0);
+            await vue('pat-proche', 16.6, 0, 0);
+            await p.goto('http://localhost:4173/diagnostic-site/#diagnostic');
             await b.close();
           })();
           JS

@@ -6,6 +6,7 @@
 // qui demanderait une lib type turf). Les surfaces sont donc une borne haute,
 // pas une mesure exacte de ce qui est strictement dans le cercle. Documenté
 // dans l'export, pas masqué.
+import { CLASSES_COSIA, indicateursSol, type ClasseCosia, type IndicateursSol } from "../../core/cosia";
 import type { NatureRaw, ProtectedZoneItem } from "./fetch";
 import { polygonAreaM2 } from "../../core/geo";
 
@@ -24,6 +25,11 @@ export interface NatureResult {
   treeDensityHa: number;
   protectedZones: ProtectedZoneItem[];
   protectedZonesFetchFailed: boolean;
+  /** Couverture du sol mesurée (CoSIA, IGN) ; null si indisponible. */
+  sol: (IndicateursSol & { millesime: string; couverturePct: number; parts: { id: ClasseCosia; titre: string; couleur: string; pct: number }[] }) | null;
+  /** Source des pourcentages végétalisé / canopée. */
+  sourceVerdure: "CoSIA" | "OSM";
+  espaceVert300: NatureRaw["espaceVert300"];
 }
 
 function sumArea(polys: { lat: number; lon: number }[][]): number {
@@ -44,7 +50,7 @@ export function computeNature(raw: NatureRaw): NatureResult {
 
   const hectares = circleAreaM2 / 10000;
 
-  return {
+  const res: NatureResult = {
     effectiveRadiusM: raw.effectiveRadiusM,
     fetchFailed: raw.fetchFailed,
     circleAreaM2: Math.round(circleAreaM2),
@@ -58,5 +64,24 @@ export function computeNature(raw: NatureRaw): NatureResult {
     treeDensityHa: hectares > 0 ? Math.round((raw.treeCount / hectares) * 10) / 10 : 0,
     protectedZones: raw.protectedZones,
     protectedZonesFetchFailed: raw.protectedZonesFetchFailed,
+    sol: null,
+    sourceVerdure: "OSM",
+    espaceVert300: raw.espaceVert300,
   };
+  if (raw.cosia && raw.cosia.totalM2 > 0) {
+    const ind = indicateursSol(raw.cosia);
+    const tot = raw.cosia.totalM2;
+    res.sol = {
+      ...ind,
+      millesime: raw.cosia.millesime,
+      couverturePct: Math.round(raw.cosia.couverturePct),
+      parts: CLASSES_COSIA.map((c) => ({ ...c, pct: Math.round((raw.cosia!.surfaces[c.id] / tot) * 1000) / 10 })).filter((c) => c.pct > 0),
+    };
+    // Mesure CoSIA plutôt que l'estimation OSM (polygones non découpés, jardins absents).
+    res.greenPct = ind.vegetalisePct;
+    res.canopyPct = ind.canopeePct;
+    res.waterPct = Math.round((raw.cosia.surfaces.eau / tot) * 1000) / 10;
+    res.sourceVerdure = "CoSIA";
+  }
+  return res;
 }

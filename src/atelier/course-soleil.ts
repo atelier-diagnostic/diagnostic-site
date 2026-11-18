@@ -154,6 +154,9 @@ export function creerCoucheCourseSoleil(id: string): CoucheCourseSoleil {
       map = m;
       renderer = new THREE.WebGLRenderer({ canvas: m.getCanvas(), context: gl as WebGLRenderingContext, antialias: true });
       renderer.autoClear = false;
+      // Ré-ajout après une perte du contexte WebGL : on redessine la voûte.
+      construireFixe();
+      construireMobile();
     },
     render(_gl, args) {
       if (!renderer || !site) return;

@@ -8,6 +8,7 @@
 // maquette précise.
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { SiteContext } from "../../core/types";
 import type { BuildingFootprint } from "../../core/osm-buildings";
 import type { LatLon } from "../../core/geo";
@@ -36,7 +37,7 @@ function buildingMesh(
   b: BuildingFootprint,
   ctx: SiteContext,
   defaultHeight: number,
-): THREE.Mesh {
+): THREE.BufferGeometry {
   const pts = b.polygon.map((p) => toLocalXY(p.lat, p.lon, ctx.lat, ctx.lon));
   const minX = Math.min(...pts.map((p) => p.x));
   const maxX = Math.max(...pts.map((p) => p.x));
@@ -44,11 +45,13 @@ function buildingMesh(
   const maxZ = Math.max(...pts.map((p) => p.z));
   const height = b.heightM ?? defaultHeight;
 
-  const geo = new THREE.BoxGeometry(Math.max(1, maxX - minX), height, Math.max(1, maxZ - minZ));
-  const mat = new THREE.MeshStandardMaterial({ color: 0xb0bfc6 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set((minX + maxX) / 2, height / 2, (minZ + maxZ) / 2);
-  return mesh;
+  // Géométrie déjà placée : toutes les boîtes sont fusionnées en un seul objet
+  // (des milliers de bâtiments = un seul appel de dessin, voir mountHeliodon).
+  return new THREE.BoxGeometry(Math.max(1, maxX - minX), height, Math.max(1, maxZ - minZ)).translate(
+    (minX + maxX) / 2,
+    height / 2,
+    (minZ + maxZ) / 2,
+  );
 }
 
 /** Arbre simplifié : tronc (cylindre) + houppier (cône). Repère visuel, pas
@@ -125,7 +128,7 @@ export function mountHeliodon(
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 5, 0);
-  controls.enableDamping = true;
+  controls.enableDamping = false; // amorti = boucle de rendu permanente
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const sun = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -148,6 +151,7 @@ export function mountHeliodon(
       groundMat.map = texture;
       groundMat.color.set(0xffffff);
       groundMat.needsUpdate = true;
+      dessiner();
     },
     undefined,
     () => {
@@ -155,8 +159,9 @@ export function mountHeliodon(
     },
   );
 
-  for (const b of buildings) {
-    scene.add(buildingMesh(b, ctx, defaultHeight));
+  if (buildings.length) {
+    const fusion = mergeGeometries(buildings.map((b) => buildingMesh(b, ctx, defaultHeight)));
+    if (fusion) scene.add(new THREE.Mesh(fusion, new THREE.MeshStandardMaterial({ color: 0xb0bfc6 })));
   }
 
   const treesToRender =
@@ -173,13 +178,20 @@ export function mountHeliodon(
     scene.add(sunPathLine(ctx.lat, d.dayOfYear, pathColors[i % pathColors.length]));
   });
 
+  // Rendu à la demande (et non en boucle permanente) : la boucle continue,
+  // même onglet Atelier ouvert, saturait la carte graphique au point de faire
+  // perdre le contexte WebGL à toute la page (carte de l'atelier vide après
+  // une trentaine de secondes, constaté le 18/11).
   let frameId = 0;
-  function animate() {
-    controls.update();
-    renderer.render(scene, camera);
-    frameId = requestAnimationFrame(animate);
-  }
-  animate();
+  const dessiner = () => {
+    if (frameId) return;
+    frameId = requestAnimationFrame(() => {
+      frameId = 0;
+      renderer.render(scene, camera);
+    });
+  };
+  controls.addEventListener("change", dessiner);
+  dessiner();
 
   // Le conteneur peut être replié au montage (largeur nulle) : on ajuste la
   // scène dès qu'il prend sa taille réelle, et à chaque redimensionnement.
@@ -190,6 +202,7 @@ export function mountHeliodon(
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    dessiner();
   });
   resizeObserver.observe(container);
 

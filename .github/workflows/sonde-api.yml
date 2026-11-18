@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/nature-ville }
+        with: { ref: claude/fond-ign }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -25,21 +25,31 @@ jobs:
           (async () => {
             const b = await pw.chromium.launch();
             const log=(...a)=>console.log(...a);
-            for (const [nom, adr] of [['marseille','2 rue jean 13004 marseille'],['arles','65 route de crau 13200 arles']]) {
-              const c = await b.newContext({ viewport:{width:1100,height:900} }); const p = await c.newPage();
-              p.on('pageerror', e => log('pageerror', e.message.slice(0,300)));
-              await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
-              await p.fill('#search-input', adr);
-              await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
-              await p.keyboard.press('Enter');
-              await p.waitForFunction(() => /Couverture du sol/.test(document.querySelector('#module-body-nature')?.textContent||''), null, {timeout:180000}).catch(e=>log('attente', e.message.split('\n')[0]));
-              await p.evaluate(() => { const d = document.querySelector('#module-body-nature'); d.hidden = false; d.closest('.module-card')?.classList.remove('collapsed'); });
-              await p.waitForTimeout(800);
-              log(nom, (await p.locator('#module-body-nature').innerText()).replace(/\s+/g,' ').slice(0, 1800));
-              await p.locator('#module-body-nature').screenshot({ path:`shots/${nom}.jpg`, quality:75 }).catch(e=>log('capture', e.message.split('\n')[0]));
-              log('synth', await p.evaluate(() => (document.body.innerText.match(/[^\n]*imperméabilis[^\n]*/g)||[]).slice(0,3).join(' | ')));
-              await c.close();
-            }
+            const c = await b.newContext({ viewport:{width:1300,height:850} }); const p = await c.newPage();
+            p.on('pageerror', e => log('pageerror', e.message.slice(0,300)));
+            p.on('console', m => { if (m.type()==='error' && !/wmts|404|400/.test(m.text())) log('console', m.text().slice(0,200)); });
+            await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
+            await p.fill('#search-input', 'place estrangin pastre 13006 marseille');
+            await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
+            await p.keyboard.press('Enter');
+            await p.waitForSelector('.map-atelier:not([hidden])', {timeout:60000});
+            await p.click('.map-atelier');
+            await p.waitForFunction(()=>/périmètre/.test(document.querySelector('.at-site')?.textContent||''), null, {timeout:60000});
+            const vue = async (nom, zoom) => {
+              await p.evaluate((z) => { const m = document.querySelector('#vue-atelier').__carte; const c = m.getCenter(); m.jumpTo({ center:[c.lng,c.lat], zoom: z }); }, zoom);
+              await p.waitForTimeout(7000);
+              await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
+            };
+            await p.click('[data-fond="compose"]');
+            await p.waitForTimeout(3000);
+            log('ign', await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const ls = m.getStyle().layers.filter(l=>l.id.startsWith('ign-')); return [ls.length, ls.filter(l=>m.getLayoutProperty(l.id,'visibility')==='visible').length, document.querySelector('[data-couche="fond"] .at-etat')?.textContent]; }));
+            await p.evaluate(() => document.querySelector('[data-couche="bati"] .switch').click());
+            await p.click('.at-replier').catch(()=>{});
+            await vue('compose-15', 15.2);
+            await p.click('.at-replier').catch(()=>{});
+            await p.click('[data-numeros="oui"]');
+            await p.click('.at-replier').catch(()=>{});
+            await vue('cadastre-18', 18);
             await b.close();
           })();
           JS

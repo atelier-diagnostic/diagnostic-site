@@ -30,6 +30,7 @@ import { fetchPatrimoine } from "../core/patrimoine";
 
 const CLE_REPLIEES = "atelier:themes-replies";
 import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
+import { enregistrerProduit, enProduit } from "./produit";
 import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIgn, type CoucheIgn } from "./fond-ign";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
@@ -193,6 +194,11 @@ export function createAtelier(root: HTMLElement): Atelier {
               <button type="button" data-rendu="volume" aria-pressed="true">Volume</button>
               <button type="button" data-rendu="point" aria-pressed="false">Point</button>
             </div>`
+        : c.produit
+          ? `<div class="segmented seg-sm" role="group" aria-label="Mode de fusion">
+              <button type="button" data-produit="${c.id}" data-fusion="produit" aria-pressed="true">Produit</button>
+              <button type="button" data-produit="${c.id}" data-fusion="normal" aria-pressed="false">Normal</button>
+            </div>`
         : c.id === "relief"
           ? `<div class="segmented seg-sm" role="group" aria-label="Exagération du relief en 3D">
               ${EXAGERATIONS.map((v) => `<button type="button" data-exag="${v}" aria-pressed="${v === exag}">×${String(v).replace(".", ",")}</button>`).join("")}
@@ -312,6 +318,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   const rasters = COUCHES.filter((c) => c.tuiles);
 
   enregistrerProtocoleRelief();
+  enregistrerProduit();
   const map = new maplibregl.Map({
     container: canvasEl,
     style: {
@@ -322,7 +329,8 @@ export function createAtelier(root: HTMLElement): Atelier {
         plan: { type: "raster", tiles: [FONDS.plan.tuiles], tileSize: 256, maxzoom: 19, attribution: "© IGN" },
         photo: { type: "raster", tiles: [FONDS.photo.tuiles], tileSize: 256, maxzoom: 19, attribution: "© IGN" },
         ...Object.fromEntries(
-          rasters.map((c) => [c.id, { type: "raster", tiles: [c.tuiles!], tileSize: 256, maxzoom: c.zoomMax ?? 20, attribution: c.source }]),
+          // Ombrages LiDAR : en mode « produit » par défaut (ils assombrissent sans griser le fond).
+          rasters.map((c) => [c.id, { type: "raster", tiles: [c.produit ? enProduit(c.tuiles!) : c.tuiles!], tileSize: 256, maxzoom: c.zoomMax ?? 20, attribution: c.source }]),
         ),
         bati: vecteur(),
         vegetation: vecteur(),
@@ -766,6 +774,15 @@ export function createAtelier(root: HTMLElement): Atelier {
       etatCouche("fond", "Plan IGN vectoriel indisponible pour le moment.");
     }
   }
+  // Mode de fusion des ombrages LiDAR : « produit » (voile multiplicatif) ou normal.
+  root.querySelectorAll<HTMLButtonElement>("[data-produit]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const c = COUCHES.find((x) => x.id === b.dataset.produit)!;
+      root.querySelectorAll(`[data-produit="${c.id}"]`).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      await pret;
+      (map.getSource(c.id) as maplibregl.RasterTileSource).setTiles([b.dataset.fusion === "produit" ? enProduit(c.tuiles!) : c.tuiles!]);
+    }),
+  );
   root.querySelectorAll<HTMLInputElement>("[data-photo]").forEach((r) =>
     r.addEventListener("input", async () => {
       photo[r.dataset.photo as keyof typeof photo] = Number(r.value) / 100;

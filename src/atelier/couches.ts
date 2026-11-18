@@ -7,7 +7,7 @@
 
 import { IGN_WMTS, IGN_LAYERS } from "../api/endpoints";
 
-export type Famille = "Fond" | "Occupation du sol" | "Parcelles" | "Bâti" | "Végétation" | "Soleil" | "Urbanisme" | "Patrimoine" | "Mobilité" | "Risques · Nature" | "Repères";
+export type Famille = "Fond" | "LiDAR HD" | "Occupation du sol" | "Parcelles" | "Bâti" | "Végétation" | "Soleil" | "Urbanisme" | "Patrimoine" | "Mobilité" | "Risques · Nature" | "Repères";
 
 export interface CoucheDef {
   id: string;
@@ -101,6 +101,52 @@ export const COUCHES: CoucheDef[] = [
     active: false,
     opacite: 0.85,
     note: "Courbes calculées dans l'atelier à partir du RGE ALTI® (un point tous les 3 à 4 m, légèrement lissé) sur un carré autour du site ; cotes en mètres NGF. Une courbe sur cinq est maîtresse et cotée.",
+  },
+  // LiDAR HD de l'IGN (nuages de points à 10 points/m², produits dérivés à
+  // 50 cm), servis en tuiles ombrées par la Géoplateforme, sans clé.
+  {
+    id: "lidar-mnt",
+    famille: "LiDAR HD",
+    titre: "Sol (MNT ombré)",
+    source: "IGN LiDAR HD",
+    active: false,
+    opacite: 0.75,
+    tuiles: wmts({ layer: "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW", format: "image/png" }),
+    zoomMax: 18,
+    note: "Relief du sol nu au pas de 50 cm, sans bâtiments ni végétation : talus, murets, fossés, anciens tracés. Couverture LiDAR HD encore en cours dans certaines régions (zones vides).",
+  },
+  {
+    id: "lidar-mns",
+    famille: "LiDAR HD",
+    titre: "Sursol (MNS ombré)",
+    source: "IGN LiDAR HD",
+    active: false,
+    opacite: 0.75,
+    tuiles: wmts({ layer: "IGNF_LIDAR-HD_MNS_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW", format: "image/png" }),
+    zoomMax: 18,
+    note: "Relief de tout ce que voit le laser : sol, bâtiments, arbres.",
+  },
+  {
+    id: "lidar-mnh",
+    famille: "LiDAR HD",
+    titre: "Hauteur du sursol (MNH)",
+    source: "IGN LiDAR HD",
+    active: false,
+    opacite: 0.75,
+    tuiles: wmts({ layer: "IGNF_LIDAR-HD_MNH_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW", format: "image/png" }),
+    zoomMax: 18,
+    note: "Hauteur au-dessus du sol (bâtiments, arbres) : utile pour lire la canopée et les volumes.",
+  },
+  {
+    id: "lidar-classes",
+    famille: "LiDAR HD",
+    titre: "Classes du nuage de points",
+    source: "IGN LiDAR HD",
+    active: false,
+    opacite: 0.75,
+    tuiles: wmts({ layer: "IGNF_LIDAR-HD_CLASS", format: "image/png" }),
+    zoomMax: 18,
+    note: "Sol, végétation basse, moyenne et haute, bâtiments, eau… tels que classés par l'IGN.",
   },
   {
     id: "cosia",
@@ -268,7 +314,7 @@ export const COUCHES: CoucheDef[] = [
   { id: "carroyage", famille: "Repères", titre: "Carroyage", source: "Lambert-93 (RGF93)", active: false, opacite: 0.45 },
 ];
 
-export const FAMILLES: Famille[] = ["Fond", "Occupation du sol", "Parcelles", "Bâti", "Végétation", "Soleil", "Urbanisme", "Patrimoine", "Mobilité", "Risques · Nature", "Repères"];
+export const FAMILLES: Famille[] = ["Fond", "LiDAR HD", "Occupation du sol", "Parcelles", "Bâti", "Végétation", "Soleil", "Urbanisme", "Patrimoine", "Mobilité", "Risques · Nature", "Repères"];
 
 /** Classes de hauteur (m) : rampe séquentielle claire → foncée. */
 export const HAUTEURS = [

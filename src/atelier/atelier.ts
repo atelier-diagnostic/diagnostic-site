@@ -30,6 +30,7 @@ import { fetchPatrimoine } from "../core/patrimoine";
 
 const CLE_REPLIEES = "atelier:themes-replies";
 import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
+import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIgn, type CoucheIgn } from "./fond-ign";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
@@ -150,6 +151,9 @@ export function createAtelier(root: HTMLElement): Atelier {
   let pas: (typeof PAS_CARROYAGE)[number] = 100;
   let exag: (typeof EXAGERATIONS)[number] = 1.5;
   let pasCourbes: (typeof PAS_COURBES)[number] = "auto";
+  let numerosCadastre = false;
+  const themesIgn = new Map<ThemeIgn, boolean>(THEMES_IGN.map((t) => [t.id, t.actif]));
+  let couchesIgn: CoucheIgn[] | null = null;
 
   // --- Gabarit ----------------------------------------------------------------
   const ligne = (c: CoucheDef) => {
@@ -158,7 +162,15 @@ export function createAtelier(root: HTMLElement): Atelier {
       c.id === "fond"
         ? `<div class="segmented seg-sm" role="group" aria-label="Fond de carte">
             ${(Object.keys(FONDS) as Fond[]).map((k) => `<button type="button" data-fond="${k}" aria-pressed="${k === fond}">${FONDS[k].titre}</button>`).join("")}
+          </div>
+          <div class="at-themes-ign" hidden>
+            ${THEMES_IGN.map((t) => `<label class="at-chip"><input type="checkbox" data-theme-ign="${t.id}" ${t.actif ? "checked" : ""}> ${t.titre}</label>`).join("")}
           </div>`
+        : c.id === "cadastre"
+          ? `<div class="segmented seg-sm" role="group" aria-label="Numéros de parcelle">
+              <button type="button" data-numeros="non" aria-pressed="true">Traits seuls</button>
+              <button type="button" data-numeros="oui" aria-pressed="false">Avec numéros</button>
+            </div>`
         : c.id === "cosia"
           ? `<div class="segmented seg-sm" role="group" aria-label="Millésime CoSIA">
               ${(Object.keys(COSIA) as MillesimeCosia[]).map((m) => `<button type="button" data-cosia="${m}" aria-pressed="${m === millesime}">${m}</button>`).join("")}
@@ -313,9 +325,13 @@ export function createAtelier(root: HTMLElement): Atelier {
         // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
         // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
+        // Parcellaire Express en tuiles vectorielles (traits fins, numéros à la demande).
+        pci: { type: "vector", tiles: ["https://data.geopf.fr/tms/1.0.0/PCI/{z}/{x}/{y}.pbf"], minzoom: 5, maxzoom: 19, attribution: "© IGN Parcellaire Express" },
         dem: { type: "raster-dem", tiles: [DEM_TUILES], tileSize: 256, encoding: "terrarium", maxzoom: 15, attribution: "© IGN RGE ALTI®" },
         "dem-ombrage": { type: "raster-dem", tiles: [DEM_TUILES], tileSize: 256, encoding: "terrarium", maxzoom: 14 },
       },
+      // Pictogrammes du Plan IGN vectoriel (fond « Composé »).
+      sprite: SPRITE_PLAN_IGN,
       layers: [
         { id: "fond-uni", type: "background", paint: { "background-color": "#efeeea" } },
         { id: "fond-plan", type: "raster", source: "plan", paint: { "raster-opacity": 0.7 } },
@@ -361,7 +377,29 @@ export function createAtelier(root: HTMLElement): Atelier {
         { id: "ombres", type: "fill", source: "ombres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.4 } },
         { id: "ombres-arbres", type: "fill", source: "ombres-arbres", layout: { visibility: "none" }, paint: { "fill-color": "#1f2a44", "fill-opacity": 0.32 } },
         // Heures de soleil au sol : image calculée, ajoutée au premier calcul (voir afficherEnsoleillement).
-        raster(COUCHES.find((c) => c.id === "cadastre")!),
+        {
+          id: "cadastre",
+          type: "line",
+          source: "pci",
+          "source-layer": "parcelle",
+          minzoom: 15,
+          paint: { "line-color": "#2b2b2e", "line-opacity": 0.8, "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.25, 17, 0.5, 19, 0.9] },
+        },
+        {
+          id: "cadastre-numeros",
+          type: "symbol",
+          source: "pci",
+          "source-layer": "localisant",
+          minzoom: 17,
+          layout: {
+            visibility: "none",
+            "text-field": ["to-string", ["to-number", ["get", "numero"], 0]],
+            "text-font": ["Source Sans Pro Regular"],
+            "text-size": 9.5,
+            "text-allow-overlap": false,
+          },
+          paint: { "text-color": "#46464a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1 },
+        },
         { id: "bati-2d", type: "fill", source: "bati", paint: { "fill-color": NEUTRE, "fill-opacity": 1, "fill-outline-color": "rgba(60,60,60,0.45)" } },
         {
           id: "bati-3d",
@@ -508,6 +546,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   const PROP: Record<string, string> = { hillshade: "hillshade-exaggeration", raster: "raster-opacity", fill: "fill-opacity", circle: "circle-opacity", line: "line-opacity", "fill-extrusion": "fill-extrusion-opacity" };
   function couchesMap(id: string): string[] {
     if (id === "fond") return [];
+    if (id === "cadastre") return ["cadastre", "cadastre-numeros"];
     if (id === "bati") return ["bati-2d", "bati-3d"];
     if (id === "arbres") return ["arbres", "arbres-3d"];
     if (id === "repere") return [];
@@ -528,6 +567,13 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLayoutProperty("fond-photo", "visibility", e.actif && fond === "photo" ? "visible" : "none");
       map.setPaintProperty("fond-plan", "raster-opacity", e.opacite);
       map.setPaintProperty("fond-photo", "raster-opacity", e.opacite);
+      root.querySelector<HTMLElement>(".at-themes-ign")!.hidden = fond !== "compose";
+      if (fond === "compose" && !couchesIgn) void chargerFondIgn();
+      for (const c of couchesIgn ?? []) {
+        if (!map.getLayer(c.layer.id)) continue;
+        map.setLayoutProperty(c.layer.id, "visibility", e.actif && fond === "compose" && themesIgn.get(c.theme) ? "visible" : "none");
+        for (const prop of OPACITE[c.layer.type] ?? []) map.setPaintProperty(c.layer.id, prop, e.opacite);
+      }
     }
     for (const lid of couchesMap(id)) {
       const layer = map.getLayer(lid);
@@ -538,6 +584,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       // Arbres en volume dans les deux vues (vus en plan en 2D), ou en points.
       if (lid === "arbres") visible = e.actif && rendu === "point";
       if (lid === "arbres-3d") visible = e.actif && rendu === "volume";
+      if (lid === "cadastre-numeros") visible = e.actif && numerosCadastre;
       map.setLayoutProperty(lid, "visibility", visible ? "visible" : "none");
       const prop = PROP[layer.type];
       // Isochrones : la réglette règle le remplissage ; les contours restent nets.
@@ -550,6 +597,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
       if (lid === "courbes-cotes") map.setPaintProperty(lid, "text-opacity", e.opacite);
       if (lid === "equipements") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
+      if (lid === "cadastre-numeros") map.setPaintProperty(lid, "text-opacity", e.opacite);
     }
     if (id === "relief") majTerrain();
     if (id === "courbes" && e.actif) void dessinerCourbes();
@@ -682,6 +730,35 @@ export function createAtelier(root: HTMLElement): Atelier {
       appliquer(id);
     });
   });
+  // --- Fond composé (Plan IGN vectoriel par thèmes) -------------------------------------
+  async function chargerFondIgn(): Promise<void> {
+    try {
+      const { source, couches } = await chargerStylePlanIgn();
+      await pret;
+      if (!map.getSource("plan_ign")) map.addSource("plan_ign", source as maplibregl.SourceSpecification);
+      // Sous l'ombrage du relief et toutes nos couches, au-dessus des fonds raster.
+      for (const c of couches) if (!map.getLayer(c.layer.id)) map.addLayer(c.layer as unknown as maplibregl.LayerSpecification, "relief");
+      couchesIgn = couches;
+      appliquer("fond");
+    } catch {
+      etatCouche("fond", "Plan IGN vectoriel indisponible pour le moment.");
+    }
+  }
+  root.querySelectorAll<HTMLInputElement>("[data-theme-ign]").forEach((cb) =>
+    cb.addEventListener("change", async () => {
+      themesIgn.set(cb.dataset.themeIgn as ThemeIgn, cb.checked);
+      await pret;
+      appliquer("fond");
+    }),
+  );
+  root.querySelectorAll<HTMLButtonElement>("[data-numeros]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      numerosCadastre = b.dataset.numeros === "oui";
+      root.querySelectorAll("[data-numeros]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      await pret;
+      appliquer("cadastre");
+    }),
+  );
   root.querySelectorAll<HTMLButtonElement>("[data-fond]").forEach((b) =>
     b.addEventListener("click", async () => {
       fond = b.dataset.fond as Fond;
@@ -1210,7 +1287,8 @@ export function createAtelier(root: HTMLElement): Atelier {
         const e = etat.get(c.id)!;
         if (!e.actif || c.id === "repere") continue;
         if (c.id === "fond") {
-          if (fond !== "aucun") items.push({ titre: `Fond : ${FONDS[fond].titre}`, source: fond === "plan" ? "IGN Plan" : "IGN BD ORTHO®" });
+          if (fond !== "aucun")
+            items.push({ titre: `Fond : ${FONDS[fond].titre}`, source: fond === "plan" ? "IGN Plan" : fond === "compose" ? "Plan IGN vecteur" : "IGN BD ORTHO®" });
           continue;
         }
         const it: ElementLegende = { titre: c.titre, source: c.source.replace(/ \(repli.*\)$/, "") };

@@ -68,12 +68,22 @@ export const PAS_COURBES = ["auto", 1, 2, 5, 10] as const;
 export const FONDS = {
   plan: { titre: "Plan", tuiles: wmts(IGN_LAYERS.plan) },
   photo: { titre: "Photo", tuiles: wmts(IGN_LAYERS.ortho) },
+  // Plan IGN vectoriel, par thèmes (voir fond-ign.ts).
+  compose: { titre: "Composé", tuiles: "" },
   aucun: { titre: "Aucun", tuiles: "" },
 } as const;
 export type Fond = keyof typeof FONDS;
 
 export const COUCHES: CoucheDef[] = [
-  { id: "fond", famille: "Fond", titre: "Fond de carte", source: "IGN Plan / BD ORTHO®", active: true, opacite: 0.7 },
+  {
+    id: "fond",
+    famille: "Fond",
+    titre: "Fond de carte",
+    source: "IGN Plan / BD ORTHO® / Plan IGN vecteur",
+    active: true,
+    opacite: 0.7,
+    note: "« Composé » : le Plan IGN vectoriel, dont on allume les thèmes un à un pour composer un fond précis.",
+  },
   {
     id: "relief",
     famille: "Fond",
@@ -109,10 +119,10 @@ export const COUCHES: CoucheDef[] = [
     id: "cadastre",
     famille: "Parcelles",
     titre: "Cadastre",
-    source: "IGN Parcellaire Express",
+    source: "IGN Parcellaire Express (vecteur)",
     active: true,
     opacite: 0.8,
-    tuiles: wms(WMS_V, "parcellaire_express_parcelle_noir,parcellaire_express_numero"),
+    note: "Limites de parcelles en trait fin, visibles à partir du zoom 15 ; numéros à partir du zoom 17.",
   },
   { id: "bati", famille: "Bâti", titre: "Bâtiments", source: "IGN BD TOPO® (repli OpenStreetMap)", active: true, opacite: 1 },
   {

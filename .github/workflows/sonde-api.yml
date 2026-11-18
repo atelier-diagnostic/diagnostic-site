@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/photo-compose }
+        with: { ref: claude/lidar }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -29,7 +29,7 @@ jobs:
             p.on('pageerror', e => log('pageerror', e.message.slice(0,300)));
             p.on('console', m => { if (m.type()==='error' && !/wmts|404|400/.test(m.text())) log('console', m.text().slice(0,200)); });
             await p.goto('http://localhost:4173/diagnostic-site/', { waitUntil:'domcontentloaded', timeout:60000 });
-            await p.fill('#search-input', 'place estrangin pastre 13006 marseille');
+            await p.fill('#search-input', 'rue vauvenargues 13007 marseille');
             await p.waitForSelector('.address-suggestions li[role=option]', {timeout:20000});
             await p.keyboard.press('Enter');
             await p.waitForSelector('.map-atelier:not([hidden])', {timeout:60000});
@@ -40,14 +40,11 @@ jobs:
               await p.waitForTimeout(7000);
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
             };
-            await p.click('[data-fond="compose"]');
-            await p.waitForTimeout(3000);
-            log('ign', await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const ls = m.getStyle().layers.filter(l=>l.id.startsWith('ign-')); return [ls.length, ls.filter(l=>m.getLayoutProperty(l.id,'visibility')==='visible').length, document.querySelector('[data-couche="fond"] .at-etat')?.textContent]; }));
-            await p.evaluate(() => document.querySelector('[data-couche="bati"] .switch').click());
+            await p.evaluate(() => { for (const id of ['fond','bati','arbres','cadastre','lidar-mnt']) document.querySelector(`[data-couche="${id}"] .switch`).click(); });
             await p.click('.at-replier').catch(()=>{});
-            
-            await p.evaluate(() => { const c = document.querySelector('[data-photo-dessous]'); c.checked = true; c.dispatchEvent(new Event('change')); });
-            await vue('photo-compose', 16.3);
+            await vue('lidar-mnt', 16.3);
+            await p.evaluate(() => { for (const id of ['lidar-mnt','lidar-mnh']) document.querySelector(`[data-couche="${id}"] .switch`).click(); });
+            await vue('lidar-mnh', 16.3);
             await b.close();
           })();
           JS

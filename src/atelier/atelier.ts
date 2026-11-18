@@ -35,6 +35,7 @@ import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIg
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
+import { FOCALES, FOCALE_DEFAUT, champVertical, lireVues, ecrireVues, vuesDeDepart, exporterVues, lireExport, type Vue } from "./vues";
 import { brancherMiseEnPage, type ElementLegende } from "./mise-en-page";
 
 type Coloration = "neutre" | "hauteur" | "usage";
@@ -245,6 +246,32 @@ export function createAtelier(root: HTMLElement): Atelier {
       <div class="at-entete"><h2>Couches</h2><span class="at-compte"></span>
         <button type="button" class="icon-btn at-replier" aria-label="Replier le panneau" title="Replier le panneau">‹</button></div>
       <div class="at-site"></div>
+      <section class="at-vues" aria-label="Vues enregistrées">
+        <div class="at-vues-entete">
+          <h3>Vues</h3>
+          <button type="button" class="at-vues-plus" title="Enregistrer l'affichage actuel (couches, réglages, caméra 3D)">＋ Enregistrer</button>
+          <button type="button" class="icon-btn at-vues-menu-btn" aria-label="Exporter, importer les vues" aria-haspopup="menu" aria-expanded="false">⋯</button>
+          <div class="at-menu at-vues-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-vues-action="exporter">Exporter les vues (fichier)</button>
+            <button type="button" role="menuitem" data-vues-action="importer">Importer des vues…</button>
+            <button type="button" role="menuitem" data-vues-action="depart">Ajouter les vues de départ</button>
+          </div>
+        </div>
+        <form class="at-vues-form" hidden>
+          <input type="text" maxlength="40" placeholder="Nom de la vue" aria-label="Nom de la vue" required>
+          <button type="submit">OK</button>
+          <button type="button" data-vues-annuler>Annuler</button>
+        </form>
+        <div class="at-vues-liste"></div>
+        <div class="at-menu at-vue-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-vue-action="maj">Remplacer par l'affichage actuel</button>
+          <button type="button" role="menuitem" data-vue-action="renommer">Renommer</button>
+          <button type="button" role="menuitem" data-vue-action="gauche">Déplacer avant</button>
+          <button type="button" role="menuitem" data-vue-action="supprimer">Supprimer</button>
+        </div>
+        <p class="at-vues-msg" aria-live="polite" hidden></p>
+        <input type="file" class="at-vues-fichier" accept=".json,application/json" hidden>
+      </section>
       <div class="at-familles">
         ${FAMILLES.map(
           (f) =>
@@ -267,6 +294,11 @@ export function createAtelier(root: HTMLElement): Atelier {
         <button type="button" data-mode="2d" aria-pressed="true">2D</button>
         <button type="button" data-mode="3d" aria-pressed="false">3D</button>
       </div>
+      <label class="at-focale" hidden title="Focale de la caméra (équivalent 24 × 36) : courte pour accentuer la profondeur, longue pour aplatir la perspective">
+        <span>Focale</span>
+        <input type="range" min="0" max="${FOCALES.length - 1}" step="1" value="${FOCALES.indexOf(FOCALE_DEFAUT)}" aria-label="Focale de la vue 3D">
+        <output>${FOCALE_DEFAUT} mm</output>
+      </label>
       <div class="m3d-panel m3d-sun at-soleil" hidden>
         <div class="m3d-sun-row">
           <input type="date" class="m3d-date" aria-label="Date">
@@ -833,6 +865,9 @@ export function createAtelier(root: HTMLElement): Atelier {
     b.addEventListener("click", () => {
       mode3d = b.dataset.mode === "3d";
       coucheCourse.setPlan(!mode3d);
+      // Focale en 3D seulement : le plan 2D garde la perspective par défaut.
+      focaleEl.hidden = !mode3d;
+      map.setVerticalFieldOfView(mode3d ? champVertical(focale) : FOV_DEFAUT);
       root.querySelectorAll(".at-mode button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       map.easeTo({ pitch: mode3d ? 55 : 0, bearing: mode3d ? -20 : 0, duration: 600 });
       appliquer("bati");
@@ -840,6 +875,269 @@ export function createAtelier(root: HTMLElement): Atelier {
       majTerrain();
     }),
   );
+
+  // --- Focale de la vue 3D -----------------------------------------------------------
+  // MapLibre garde l'échelle au centre de la vue : changer la focale rapproche ou
+  // éloigne la caméra (effet « travelling compensé ») ; courte focale = profondeur accentuée.
+  const FOV_DEFAUT = map.getVerticalFieldOfView();
+  let focale: number = FOCALE_DEFAUT;
+  const focaleEl = q<HTMLLabelElement>(".at-focale");
+  const focaleRange = focaleEl.querySelector("input")!;
+  function setFocale(f: number): void {
+    const i = FOCALES.reduce((m, v, k) => (Math.abs(v - f) < Math.abs(FOCALES[m] - f) ? k : m), 0);
+    focale = FOCALES[i];
+    focaleRange.value = String(i);
+    focaleEl.querySelector("output")!.textContent = `${focale} mm`;
+    if (mode3d) map.setVerticalFieldOfView(champVertical(focale));
+  }
+  focaleRange.addEventListener("input", () => setFocale(FOCALES[Number(focaleRange.value)]));
+
+  // --- Vues enregistrées ---------------------------------------------------------------
+  // L'état est lu sur les commandes du panneau et rejoué en les actionnant : une vue
+  // passe par les mêmes chemins qu'un clic, sans logique en double.
+  const GROUPES = ["fond", "colo", "exag", "courbes", "pas", "cosia", "rendu", "numeros", "mode"] as const;
+  const vuesEl = q<HTMLElement>(".at-vues");
+  const listeVues = q<HTMLElement>(".at-vues-liste");
+  const formVue = q<HTMLFormElement>(".at-vues-form");
+  const nomVue = formVue.querySelector("input")!;
+  const menuVues = q<HTMLElement>(".at-vues-menu");
+  const menuVue = q<HTMLElement>(".at-vue-menu");
+  const msgVues = q<HTMLElement>(".at-vues-msg");
+  const fichierVues = q<HTMLInputElement>(".at-vues-fichier");
+  const idsCouches = COUCHES.map((c) => c.id);
+  let vues: Vue[] = lireVues() ?? vuesDeDepart(idsCouches);
+  let vueActive: number | null = null;
+  let vueMenu = -1; // vue dont le menu est ouvert
+  let renommage: number | null = null; // null : nouvelle vue
+
+  function capturerVue(nom: string): Vue {
+    const reglages: Record<string, string> = {};
+    for (const g of GROUPES) {
+      const b = root.querySelector<HTMLElement>(`[data-${g}][aria-pressed="true"]`);
+      if (b) reglages[g] = b.getAttribute(`data-${g}`)!;
+    }
+    root.querySelectorAll<HTMLElement>('[data-produit][aria-pressed="true"]').forEach((b) => (reglages[`produit:${b.dataset.produit}`] = b.dataset.fusion!));
+    const coches: Record<string, boolean> = { "photo-dessous": q<HTMLInputElement>("[data-photo-dessous]").checked };
+    root.querySelectorAll<HTMLInputElement>("[data-theme-ign]").forEach((cb) => (coches[`theme-ign:${cb.dataset.themeIgn}`] = cb.checked));
+    return {
+      nom,
+      couches: Object.fromEntries([...etat].map(([id, e]) => [id, [e.actif, Math.round(e.opacite * 100) / 100]])),
+      reglages,
+      coches,
+      photo: { ...photo },
+      camera: mode3d ? { pitch: Math.round(map.getPitch()), bearing: Math.round(map.getBearing()), focale } : undefined,
+    };
+  }
+  const actionner = (el: HTMLInputElement, type: "change" | "input") => el.dispatchEvent(new Event(type, { bubbles: true }));
+  function appliquerVue(v: Vue): void {
+    for (const [g, val] of Object.entries(v.reglages ?? {})) {
+      if (g === "mode") continue;
+      const sel = g.startsWith("produit:") ? `[data-produit="${g.slice(8)}"][data-fusion="${val}"]` : `[data-${g}="${val}"]`;
+      const b = root.querySelector<HTMLButtonElement>(sel);
+      if (b && b.getAttribute("aria-pressed") !== "true") b.click();
+    }
+    const coches = v.coches ?? {};
+    const dessous = q<HTMLInputElement>("[data-photo-dessous]");
+    if ("photo-dessous" in coches && dessous.checked !== coches["photo-dessous"]) {
+      dessous.checked = coches["photo-dessous"];
+      actionner(dessous, "change");
+    }
+    root.querySelectorAll<HTMLInputElement>("[data-theme-ign]").forEach((cb) => {
+      const val = coches[`theme-ign:${cb.dataset.themeIgn}`];
+      if (val !== undefined && cb.checked !== val) {
+        cb.checked = val;
+        actionner(cb, "change");
+      }
+    });
+    root.querySelectorAll<HTMLInputElement>("[data-photo]").forEach((r) => {
+      const val = v.photo?.[r.dataset.photo!];
+      if (typeof val === "number" && Number(r.value) !== Math.round(val * 100)) {
+        r.value = String(Math.round(val * 100));
+        actionner(r, "input");
+      }
+    });
+    for (const [id, [actif, opacite]] of Object.entries(v.couches)) {
+      const el = root.querySelector<HTMLElement>(`.at-couche[data-couche="${id}"]`);
+      if (!el) continue;
+      const sw = el.querySelector<HTMLInputElement>(".switch")!;
+      const range = el.querySelector<HTMLInputElement>(':scope > .at-reglages > .at-opacite input[type="range"]')!;
+      if (opacite >= 0 && Number(range.value) !== Math.round(opacite * 100)) {
+        range.value = String(Math.round(opacite * 100));
+        actionner(range, "input");
+      }
+      if (sw.checked !== actif) {
+        sw.checked = actif;
+        actionner(sw, "change");
+      }
+    }
+    const mode = v.reglages?.mode;
+    const bMode = mode ? root.querySelector<HTMLButtonElement>(`.at-mode [data-mode="${mode}"]`) : null;
+    if (bMode && bMode.getAttribute("aria-pressed") !== "true") bMode.click();
+    if (v.camera && mode3d) {
+      setFocale(v.camera.focale);
+      map.easeTo({ pitch: v.camera.pitch, bearing: v.camera.bearing, duration: 700 });
+    }
+  }
+  function dessinerVues(): void {
+    listeVues.innerHTML = vues.length
+      ? vues
+          .map(
+            (v, i) => `<span class="at-vue">
+              <button type="button" class="at-vue-btn" data-vue-i="${i}" aria-pressed="${i === vueActive}">${esc(v.nom)}${v.camera ? '<span class="at-vue-3d">3D</span>' : ""}</button>
+              <button type="button" class="at-vue-plus" data-vue-menu="${i}" aria-label="Actions sur la vue ${esc(v.nom)}" aria-haspopup="menu">⋯</button>
+            </span>`,
+          )
+          .join("")
+      : '<p class="at-note">Aucune vue : réglez les couches, puis « Enregistrer ».</p>';
+  }
+  function memoriser(): void {
+    ecrireVues(vues);
+    dessinerVues();
+  }
+  let minuterieMsg = 0;
+  function message(texte: string, annuler?: () => void): void {
+    msgVues.innerHTML = esc(texte) + (annuler ? ' <button type="button" class="at-lien">Annuler</button>' : "");
+    msgVues.hidden = false;
+    msgVues.querySelector("button")?.addEventListener("click", () => {
+      annuler!();
+      msgVues.hidden = true;
+    });
+    clearTimeout(minuterieMsg);
+    minuterieMsg = window.setTimeout(() => (msgVues.hidden = true), 6000);
+  }
+  function fermerMenus(): void {
+    menuVues.hidden = menuVue.hidden = true;
+    q<HTMLElement>(".at-vues-menu-btn").setAttribute("aria-expanded", "false");
+  }
+  function ouvrirFormulaire(nom: string, index: number | null): void {
+    renommage = index;
+    formVue.hidden = false;
+    nomVue.value = nom;
+    nomVue.focus();
+    nomVue.select();
+  }
+  q<HTMLButtonElement>(".at-vues-plus").addEventListener("click", () => {
+    fermerMenus();
+    ouvrirFormulaire(`Vue ${vues.length + 1}`, null);
+  });
+  formVue.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const nom = nomVue.value.trim();
+    if (!nom) return;
+    if (renommage === null) {
+      vues.push(capturerVue(nom));
+      vueActive = vues.length - 1;
+      message(`Vue « ${nom} » enregistrée.`);
+    } else vues[renommage].nom = nom;
+    formVue.hidden = true;
+    memoriser();
+  });
+  q<HTMLButtonElement>("[data-vues-annuler]").addEventListener("click", () => (formVue.hidden = true));
+  listeVues.addEventListener("click", (ev) => {
+    const cible = ev.target as HTMLElement;
+    const b = cible.closest<HTMLElement>("[data-vue-i]");
+    const m = cible.closest<HTMLElement>("[data-vue-menu]");
+    if (b) {
+      fermerMenus();
+      const i = Number(b.dataset.vueI);
+      appliquerVue(vues[i]);
+      vueActive = i;
+      dessinerVues();
+    } else if (m) {
+      const i = Number(m.dataset.vueMenu);
+      const ouvert = !menuVue.hidden && vueMenu === i;
+      fermerMenus();
+      if (ouvert) return;
+      vueMenu = i;
+      menuVue.querySelector<HTMLButtonElement>('[data-vue-action="gauche"]')!.disabled = i === 0;
+      const r = m.getBoundingClientRect(), base = vuesEl.getBoundingClientRect();
+      menuVue.style.top = `${r.bottom - base.top + 4}px`;
+      menuVue.style.left = `${Math.max(8, Math.min(r.left - base.left, base.width - 230))}px`;
+      menuVue.hidden = false;
+    }
+  });
+  menuVue.addEventListener("click", (ev) => {
+    const action = (ev.target as HTMLElement).closest<HTMLElement>("[data-vue-action]")?.dataset.vueAction;
+    const i = vueMenu;
+    fermerMenus();
+    if (!action || !vues[i]) return;
+    if (action === "maj") {
+      vues[i] = capturerVue(vues[i].nom);
+      vueActive = i;
+      message(`Vue « ${vues[i].nom} » mise à jour.`);
+    } else if (action === "renommer") return ouvrirFormulaire(vues[i].nom, i);
+    else if (action === "gauche" && i > 0) {
+      [vues[i - 1], vues[i]] = [vues[i], vues[i - 1]];
+      if (vueActive === i) vueActive = i - 1;
+      else if (vueActive === i - 1) vueActive = i;
+    } else if (action === "supprimer") {
+      const [retiree] = vues.splice(i, 1);
+      if (vueActive === i) vueActive = null;
+      else if (vueActive !== null && vueActive > i) vueActive--;
+      message(`Vue « ${retiree.nom} » supprimée.`, () => {
+        vues.splice(i, 0, retiree);
+        memoriser();
+      });
+    }
+    memoriser();
+  });
+  q<HTMLButtonElement>(".at-vues-menu-btn").addEventListener("click", (ev) => {
+    const ouvert = menuVues.hidden;
+    fermerMenus();
+    menuVues.hidden = !ouvert;
+    (ev.currentTarget as HTMLElement).setAttribute("aria-expanded", String(ouvert));
+  });
+  menuVues.addEventListener("click", (ev) => {
+    const action = (ev.target as HTMLElement).closest<HTMLElement>("[data-vues-action]")?.dataset.vuesAction;
+    fermerMenus();
+    if (action === "exporter") {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(exporterVues(vues));
+      a.download = `vues-atelier-${today()}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } else if (action === "importer") fichierVues.click();
+    else if (action === "depart") {
+      const noms = new Set(vues.map((v) => v.nom));
+      const ajout = vuesDeDepart(idsCouches).filter((v) => !noms.has(v.nom));
+      vues.push(...ajout);
+      memoriser();
+      message(ajout.length ? `${ajout.length} vue${ajout.length > 1 ? "s" : ""} de départ ajoutée${ajout.length > 1 ? "s" : ""}.` : "Les vues de départ sont déjà là.");
+    }
+  });
+  fichierVues.addEventListener("change", async () => {
+    const f = fichierVues.files?.[0];
+    fichierVues.value = "";
+    if (!f) return;
+    try {
+      const lues = lireExport(await f.text());
+      // Même nom : la vue importée remplace l'ancienne.
+      for (const v of lues) {
+        const k = vues.findIndex((x) => x.nom === v.nom);
+        if (k >= 0) vues[k] = v;
+        else vues.push(v);
+      }
+      memoriser();
+      message(`${lues.length} vue${lues.length > 1 ? "s" : ""} importée${lues.length > 1 ? "s" : ""}.`);
+    } catch {
+      message("Fichier non reconnu : exportez-le depuis l'atelier (format JSON).");
+    }
+  });
+  document.addEventListener("click", (ev) => {
+    if (!(ev.target as HTMLElement).closest(".at-vues-menu, .at-vue-menu, .at-vues-menu-btn, [data-vue-menu]")) fermerMenus();
+  });
+  // Un réglage fait à la main fait quitter la vue active (les actions rejouées par une vue ne sont pas « de confiance »).
+  const quitterVue = (ev: Event) => {
+    if (!ev.isTrusted || vueActive === null || (ev.target as HTMLElement).closest(".at-vues, .at-famille-btn, .at-leg")) return;
+    vueActive = null;
+    dessinerVues();
+  };
+  for (const zone of [q<HTMLElement>(".at-familles"), q<HTMLElement>(".at-mode"), focaleEl]) {
+    zone.addEventListener("change", quitterVue);
+    zone.addEventListener("click", quitterVue);
+    zone.addEventListener("input", quitterVue);
+  }
+  dessinerVues();
 
   // --- Relief 3D -----------------------------------------------------------------
   // Terrain en vue 3D seulement : en 2D le plan reste orthogonal et l'ombrage suffit.

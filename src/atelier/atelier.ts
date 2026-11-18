@@ -735,8 +735,8 @@ export function createAtelier(root: HTMLElement): Atelier {
     const id = el.dataset.couche!;
     const e = etat.get(id)!;
     const sw = el.querySelector<HTMLInputElement>(".switch")!;
-    const range = el.querySelector<HTMLInputElement>('.at-opacite input[type="range"]')!;
-    const out = el.querySelector(".at-opacite output")!;
+    const range = el.querySelector<HTMLInputElement>(':scope > .at-reglages > .at-opacite input[type="range"]')!;
+    const out = el.querySelector(":scope > .at-reglages > .at-opacite output")!;
     sw.addEventListener("change", async () => {
       e.actif = sw.checked;
       el.classList.toggle("on", e.actif);

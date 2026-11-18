@@ -65,7 +65,7 @@ export const PAS_CARROYAGE = [50, 100, 200, 500] as const;
 export const EXAGERATIONS = [1, 1.5, 2, 3] as const;
 
 /** Équidistance des courbes de niveau proposée (m). */
-export const PAS_COURBES = ["auto", 1, 2, 5, 10] as const;
+export const PAS_COURBES = ["auto", 0.5, 1, 2, 5, 10] as const;
 
 export const FONDS = {
   plan: { titre: "Plan", tuiles: wmts(IGN_LAYERS.plan) },
@@ -99,10 +99,10 @@ export const COUCHES: CoucheDef[] = [
     id: "courbes",
     famille: "Fond",
     titre: "Courbes de niveau",
-    source: "Calcul à partir du RGE ALTI®",
+    source: "Calcul à partir du LiDAR HD ou du RGE ALTI®",
     active: false,
     opacite: 0.85,
-    note: "Courbes calculées dans l'atelier à partir du RGE ALTI® (un point tous les 3 à 4 m, légèrement lissé) sur un carré autour du site ; cotes en mètres NGF. Une courbe sur cinq est maîtresse et cotée.",
+    note: "Courbes calculées dans l'atelier sur un carré autour du site ; cotes en mètres NGF, une courbe sur cinq maîtresse et cotée. LiDAR HD : MNT 50 cm lu à 0,9 m (1,7 m au-delà de 1 km), lissé, complété par le RGE ALTI® là où il n'est pas encore publié ; permet l'équidistance de 0,5 m. RGE ALTI® : un point tous les 3 à 4 m.",
   },
   // LiDAR HD de l'IGN (nuages de points à 10 points/m², produits dérivés à
   // 50 cm), servis en tuiles ombrées par la Géoplateforme, sans clé.

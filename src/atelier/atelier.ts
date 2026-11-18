@@ -29,12 +29,14 @@ import { recenserEquipements, FONCTIONS } from "./equipements";
 import { fetchPatrimoine } from "../core/patrimoine";
 
 const CLE_REPLIEES = "atelier:themes-replies";
-import { DEM_TUILES, enregistrerProtocoleRelief } from "./relief-dem";
+const CLE_VUES_REPLIEES = "atelier:vues-repliees";
+import { DEM_TUILES, enregistrerProtocoleRelief, type SourceAlt } from "./relief-dem";
 import { enregistrerProduit, enProduit } from "./produit";
 import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIgn, type CoucheIgn } from "./fond-ign";
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
+import { calculerProfil, dessinerProfil, penteEn, profilCsv, distanceM, COULEURS_ECRAN, COULEURS_EXPORT, EXAGERATIONS_COUPE, type Profil, type ExagCoupe } from "./coupe";
 import { FOCALES, FOCALE_DEFAUT, champVertical, lireVues, ecrireVues, vuesDeDepart, exporterVues, lireExport, type Vue } from "./vues";
 import { brancherMiseEnPage, type ElementLegende } from "./mise-en-page";
 
@@ -129,6 +131,12 @@ export function createAtelier(root: HTMLElement): Atelier {
   } catch {
     /* rien de retenu */
   }
+  let vuesRepliees = false;
+  try {
+    vuesRepliees = localStorage.getItem(CLE_VUES_REPLIEES) === "1";
+  } catch {
+    /* rien de retenu */
+  }
   if (!webglDisponible()) {
     root.innerHTML = `<div class="at-sans-webgl"><div>
       <h2>La carte de l'atelier ne peut pas s'afficher</h2>
@@ -154,6 +162,10 @@ export function createAtelier(root: HTMLElement): Atelier {
   let exag: (typeof EXAGERATIONS)[number] = 1.5;
   let pasCourbes: (typeof PAS_COURBES)[number] = "auto";
   let numerosCadastre = false;
+  /** Altitudes des courbes et des coupes : LiDAR HD (complété par le RGE ALTI) ou RGE ALTI seul. */
+  let sourceAlt: SourceAlt = "lidar";
+  /** Bâtiments chargés (pour les coupes). */
+  let dernierBati: GeoJSON.FeatureCollection | null = null;
   /** Fond composé posé sur la photo aérienne (le fond opaque IGN s'efface). */
   let photoDessous = false;
   /** Réglages propres à la photo aérienne (0-1) : opacité sous le composé, couleurs, éclaircissement. */
@@ -207,6 +219,10 @@ export function createAtelier(root: HTMLElement): Atelier {
         : c.id === "courbes"
           ? `<div class="segmented seg-sm" role="group" aria-label="Équidistance des courbes">
               ${PAS_COURBES.map((v) => `<button type="button" data-courbes="${v}" aria-pressed="${v === pasCourbes}">${v === "auto" ? "Auto" : `${v} m`}</button>`).join("")}
+            </div>
+            <div class="segmented seg-sm" role="group" aria-label="Source des altitudes">
+              <button type="button" data-alt="lidar" aria-pressed="true">LiDAR HD 50 cm</button>
+              <button type="button" data-alt="rgealti" aria-pressed="false">RGE ALTI 1 m</button>
             </div>`
         : c.id === "carroyage"
           ? `<div class="segmented seg-sm" role="group" aria-label="Pas du carroyage">
@@ -246,9 +262,11 @@ export function createAtelier(root: HTMLElement): Atelier {
       <div class="at-entete"><h2>Couches</h2><span class="at-compte"></span>
         <button type="button" class="icon-btn at-replier" aria-label="Replier le panneau" title="Replier le panneau">‹</button></div>
       <div class="at-site"></div>
-      <section class="at-vues" aria-label="Vues enregistrées">
+      <section class="at-vues${vuesRepliees ? " repliee" : ""}" aria-label="Vues enregistrées">
         <div class="at-vues-entete">
-          <h3>Vues</h3>
+          <h3><button type="button" class="at-vues-titre" aria-expanded="${!vuesRepliees}">
+            <svg class="at-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Vues<span class="at-vues-active"></span></button></h3>
           <button type="button" class="at-vues-plus" title="Enregistrer l'affichage actuel (couches, réglages, caméra 3D)">＋ Enregistrer</button>
           <button type="button" class="icon-btn at-vues-menu-btn" aria-label="Exporter, importer les vues" aria-haspopup="menu" aria-expanded="false">⋯</button>
           <div class="at-menu at-vues-menu" role="menu" hidden>
@@ -290,15 +308,47 @@ export function createAtelier(root: HTMLElement): Atelier {
     <div class="at-carte">
       <div class="at-canvas"></div>
       <button type="button" class="at-ouvrir icon-btn" aria-label="Afficher les couches" title="Afficher les couches">☰</button>
-      <div class="segmented at-mode" role="group" aria-label="Vue">
-        <button type="button" data-mode="2d" aria-pressed="true">2D</button>
-        <button type="button" data-mode="3d" aria-pressed="false">3D</button>
+      <div class="at-barre">
+        <div class="segmented at-mode" role="group" aria-label="Vue">
+          <button type="button" data-mode="2d" aria-pressed="true">2D</button>
+          <button type="button" data-mode="3d" aria-pressed="false">3D</button>
+        </div>
+        <div class="at-focale" hidden>
+          <button type="button" class="at-outil at-focale-btn" aria-expanded="false" title="Focale de la caméra (équivalent 24 × 36) : courte pour accentuer la profondeur, longue pour aplatir la perspective">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
+            <span>${FOCALE_DEFAUT} mm</span>
+          </button>
+          <input type="range" class="at-focale-reglette" hidden min="0" max="${FOCALES.length - 1}" step="1" value="${FOCALES.indexOf(FOCALE_DEFAUT)}" aria-label="Focale de la vue 3D">
+        </div>
+        <button type="button" class="at-outil at-coupe-btn" aria-pressed="false" title="Coupe de terrain : cliquez deux points sur la carte">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 12.5 5 7l3 3 2.5-4 4 6.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/><path d="M1.5 14.5h13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <span>Coupe</span>
+        </button>
       </div>
-      <label class="at-focale" hidden title="Focale de la caméra (équivalent 24 × 36) : courte pour accentuer la profondeur, longue pour aplatir la perspective">
-        <span>Focale</span>
-        <input type="range" min="0" max="${FOCALES.length - 1}" step="1" value="${FOCALES.indexOf(FOCALE_DEFAUT)}" aria-label="Focale de la vue 3D">
-        <output>${FOCALE_DEFAUT} mm</output>
-      </label>
+      <div class="at-coupe-aide" hidden>Cliquez le point A <span class="at-note">· Échap pour annuler</span></div>
+      <section class="at-coupe" aria-label="Coupe de terrain" hidden>
+        <div class="at-coupe-entete">
+          <h3>Coupe A–B</h3>
+          <div class="segmented seg-sm" role="group" aria-label="Source des altitudes">
+            <button type="button" data-alt="lidar" aria-pressed="true">LiDAR HD</button>
+            <button type="button" data-alt="rgealti" aria-pressed="false">RGE ALTI</button>
+          </div>
+          <div class="segmented seg-sm" role="group" aria-label="Exagération verticale">
+            ${EXAGERATIONS_COUPE.map((v) => `<button type="button" data-coupe-exag="${v}" aria-pressed="${v === "auto"}">${v === "auto" ? "Auto" : `×${v}`}</button>`).join("")}
+          </div>
+          <label class="at-chip"><input type="checkbox" data-coupe-bati checked> Bâti</label>
+          <span class="at-coupe-actions">
+            <button type="button" class="at-lien" data-coupe-export="svg" title="Profil en SVG (vectoriel, pour la mise en page)">SVG</button>
+            <button type="button" class="at-lien" data-coupe-export="csv" title="Distances et altitudes (tableur)">CSV</button>
+            <button type="button" class="at-lien" data-coupe-nouvelle>Nouvelle</button>
+            <button type="button" class="icon-btn" data-coupe-reduire aria-label="Réduire le profil" aria-expanded="true" title="Réduire / déplier le profil">–</button>
+            <button type="button" class="icon-btn" data-coupe-fermer aria-label="Fermer la coupe">×</button>
+          </span>
+        </div>
+        <div class="at-coupe-chiffres"></div>
+        <div class="at-coupe-profil"><div class="at-coupe-bulle" hidden></div></div>
+        <p class="at-note at-coupe-source"></p>
+      </section>
       <div class="m3d-panel m3d-sun at-soleil" hidden>
         <div class="m3d-sun-row">
           <input type="date" class="m3d-date" aria-label="Date">
@@ -375,6 +425,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         isochrones: vecteur(),
         equipements: vecteur(),
         patrimoine: vecteur(),
+        coupe: vecteur(),
         // Deux sources pour les mêmes tuiles : MapLibre conseille de séparer terrain et ombrage.
         // Terrain jusqu'au zoom 15 (environ 3 m par pixel, assez pour le volume) ; ombrage au
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
@@ -547,6 +598,18 @@ export function createAtelier(root: HTMLElement): Atelier {
           paint: { "line-color": "#3a3a3c", "line-opacity": 0.45, "line-width": ["case", ["get", "majeur"], 1, 0.5] },
         },
         { id: "perimetre", type: "line", source: "perimetre", paint: { "line-color": "#3a3a3c", "line-width": 1.5, "line-dasharray": [3, 2] } },
+        // Coupe de terrain : trait A–B (posé sur le relief en 3D), points clés, curseur du profil.
+        { id: "coupe-halo", type: "line", source: "coupe", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round" }, paint: { "line-color": "#ffffff", "line-width": 5, "line-opacity": 0.85 } },
+        { id: "coupe-ligne", type: "line", source: "coupe", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round" }, paint: { "line-color": "#1d1d1f", "line-width": 2, "line-opacity": ["case", ["get", "apercu"], 0.5, 1] } },
+        { id: "coupe-points", type: "circle", source: "coupe", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": ["case", ["==", ["get", "role"], "curseur"], 5, 4], "circle-color": ["case", ["==", ["get", "role"], "curseur"], "#f5b301", "#1d1d1f"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 } },
+        {
+          id: "coupe-etiquettes",
+          type: "symbol",
+          source: "coupe",
+          filter: ["all", ["==", ["geometry-type"], "Point"], ["has", "label"]],
+          layout: { "text-field": ["get", "label"], "text-font": ["Source Sans Pro Regular"], "text-size": 11, "text-offset": [0, -1.2], "text-allow-overlap": true },
+          paint: { "text-color": "#1d1d1f", "text-halo-color": "rgba(255,255,255,0.92)", "text-halo-width": 1.5 },
+        },
       ],
     },
     center: [2.5, 46.6],
@@ -881,21 +944,28 @@ export function createAtelier(root: HTMLElement): Atelier {
   // éloigne la caméra (effet « travelling compensé ») ; courte focale = profondeur accentuée.
   const FOV_DEFAUT = map.getVerticalFieldOfView();
   let focale: number = FOCALE_DEFAUT;
-  const focaleEl = q<HTMLLabelElement>(".at-focale");
-  const focaleRange = focaleEl.querySelector("input")!;
+  const focaleEl = q<HTMLElement>(".at-focale");
+  const focaleRange = q<HTMLInputElement>(".at-focale-reglette");
+  const focaleBtn = q<HTMLButtonElement>(".at-focale-btn");
   function setFocale(f: number): void {
     const i = FOCALES.reduce((m, v, k) => (Math.abs(v - f) < Math.abs(FOCALES[m] - f) ? k : m), 0);
     focale = FOCALES[i];
     focaleRange.value = String(i);
-    focaleEl.querySelector("output")!.textContent = `${focale} mm`;
+    focaleBtn.querySelector("span")!.textContent = `${focale} mm`;
     if (mode3d) map.setVerticalFieldOfView(champVertical(focale));
   }
   focaleRange.addEventListener("input", () => setFocale(FOCALES[Number(focaleRange.value)]));
+  // Réglette repliée dans le bouton : elle se déplie à côté de 2D / 3D au clic.
+  focaleBtn.addEventListener("click", () => {
+    const ouvrir = focaleRange.hidden;
+    focaleRange.hidden = !ouvrir;
+    focaleBtn.setAttribute("aria-expanded", String(ouvrir));
+  });
 
   // --- Vues enregistrées ---------------------------------------------------------------
   // L'état est lu sur les commandes du panneau et rejoué en les actionnant : une vue
   // passe par les mêmes chemins qu'un clic, sans logique en double.
-  const GROUPES = ["fond", "colo", "exag", "courbes", "pas", "cosia", "rendu", "numeros", "mode"] as const;
+  const GROUPES = ["fond", "colo", "exag", "courbes", "alt", "pas", "cosia", "rendu", "numeros", "mode"] as const;
   const vuesEl = q<HTMLElement>(".at-vues");
   const listeVues = q<HTMLElement>(".at-vues-liste");
   const formVue = q<HTMLFormElement>(".at-vues-form");
@@ -989,7 +1059,20 @@ export function createAtelier(root: HTMLElement): Atelier {
           )
           .join("")
       : '<p class="at-note">Aucune vue : réglez les couches, puis « Enregistrer ».</p>';
+    // Thème replié : la vue active reste lisible dans l'en-tête.
+    q<HTMLElement>(".at-vues-active").textContent = vueActive !== null && vues[vueActive] ? ` · ${vues[vueActive].nom}` : "";
   }
+  q<HTMLButtonElement>(".at-vues-titre").addEventListener("click", (ev) => {
+    const replie = !vuesEl.classList.contains("repliee");
+    vuesEl.classList.toggle("repliee", replie);
+    (ev.currentTarget as HTMLElement).setAttribute("aria-expanded", String(!replie));
+    if (replie) fermerMenus();
+    try {
+      localStorage.setItem(CLE_VUES_REPLIEES, replie ? "1" : "0");
+    } catch {
+      /* stockage indisponible */
+    }
+  });
   function memoriser(): void {
     ecrireVues(vues);
     dessinerVues();
@@ -1018,6 +1101,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   }
   q<HTMLButtonElement>(".at-vues-plus").addEventListener("click", () => {
     fermerMenus();
+    if (vuesEl.classList.contains("repliee")) q<HTMLButtonElement>(".at-vues-titre").click();
     ouvrirFormulaire(`Vue ${vues.length + 1}`, null);
   });
   formVue.addEventListener("submit", (ev) => {
@@ -1132,7 +1216,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     vueActive = null;
     dessinerVues();
   };
-  for (const zone of [q<HTMLElement>(".at-familles"), q<HTMLElement>(".at-mode"), focaleEl]) {
+  for (const zone of [q<HTMLElement>(".at-familles"), q<HTMLElement>(".at-mode"), focaleEl, q<HTMLElement>(".at-coupe")]) {
     zone.addEventListener("change", quitterVue);
     zone.addEventListener("click", quitterVue);
     zone.addEventListener("input", quitterVue);
@@ -1193,14 +1277,21 @@ export function createAtelier(root: HTMLElement): Atelier {
     etatCouche("courbes", "Calcul…");
     try {
       const demi = Math.min(1500, Math.max(400, (ctx.radiusM ?? 150) * 1.5));
-      const c = await calculerCourbes(ctx.lat, ctx.lon, demi, pasCourbes);
+      const c = await calculerCourbes(ctx.lat, ctx.lon, demi, pasCourbes, sourceAlt);
       if (n !== demandeCourbes || site !== ctx) return;
       (map.getSource("courbes") as maplibregl.GeoJSONSource).setData(c.geojson);
       const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
       etatCouche(
         "courbes",
         c.geojson.features.length
-          ? `Équidistance ${fr(c.equidistance)} m · altitudes de ${fr(c.min)} à ${fr(c.max)} m sur un carré de ${fr((2 * demi) / 1000)} km de côté.` +
+          ? `Équidistance ${fr(c.equidistance)} m · altitudes de ${fr(c.min)} à ${fr(c.max)} m sur un carré de ${fr((2 * demi) / 1000)} km de côté · ` +
+            (sourceAlt === "lidar"
+              ? c.partLidar > 0.995
+                ? `LiDAR HD, grille de ${fr(c.pasM)} m.`
+                : c.partLidar > 0.005
+                  ? `LiDAR HD sur ${Math.round(c.partLidar * 100)} % de l'emprise, complété par le RGE ALTI, grille de ${fr(c.pasM)} m.`
+                  : "LiDAR HD pas encore publié ici : RGE ALTI."
+              : `RGE ALTI, grille de ${fr(c.pasM)} m.`) +
             (c.manquantes ? ` Courbes incomplètes : ${c.manquantes} tuile(s) d'altitudes refusée(s) par l'IGN, réactiver la couche pour compléter.` : "")
           : "Pas d'altitude disponible ici.",
       );
@@ -1215,6 +1306,243 @@ export function createAtelier(root: HTMLElement): Atelier {
       root.querySelectorAll("[data-courbes]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       await pret;
       void dessinerCourbes();
+    }),
+  );
+
+  // Source des altitudes (courbes et coupes) : deux jeux de boutons, synchronisés.
+  root.querySelectorAll<HTMLButtonElement>("[data-alt]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      sourceAlt = b.dataset.alt as SourceAlt;
+      root.querySelectorAll("[data-alt]").forEach((x) => x.setAttribute("aria-pressed", String(x.getAttribute("data-alt") === sourceAlt)));
+      await pret;
+      void dessinerCourbes();
+      if (profil) void tracerCoupe();
+    }),
+  );
+
+  // --- Coupe de terrain ---------------------------------------------------------------
+  const coupeBtn = q<HTMLButtonElement>(".at-coupe-btn");
+  const coupeAide = q<HTMLElement>(".at-coupe-aide");
+  const coupeEl = q<HTMLElement>(".at-coupe");
+  const coupeProfil = q<HTMLElement>(".at-coupe-profil");
+  const coupeBulle = q<HTMLElement>(".at-coupe-bulle");
+  let trace: "aucun" | "A" | "B" = "aucun";
+  /** Clic qui vient de poser un point de coupe : pas de fiche d'information pour lui. */
+  let evtCoupe: Event | null = null;
+  let ptA: [number, number] | null = null, ptB: [number, number] | null = null;
+  let profil: Profil | null = null;
+  let dessin: ReturnType<typeof dessinerProfil> | null = null;
+  let exagCoupe: ExagCoupe = "auto";
+  let batiCoupe = true;
+  let demandeCoupe = 0;
+  const marqueur = (lettre: string) => {
+    const el = document.createElement("div");
+    el.className = "at-coupe-pt";
+    el.textContent = lettre;
+    const mk = new maplibregl.Marker({ element: el, draggable: true });
+    mk.on("dragend", () => {
+      const { lng, lat } = mk.getLngLat();
+      if (lettre === "A") ptA = [lng, lat];
+      else ptB = [lng, lat];
+      void tracerCoupe();
+    });
+    return mk;
+  };
+  const mkA = marqueur("A"), mkB = marqueur("B");
+  const frc = (v: number, dec = 1) => v.toLocaleString("fr-FR", { maximumFractionDigits: dec });
+  const signe = (v: number, dec = 1) => `${v >= 0 ? "+" : "−"}${frc(Math.abs(v), dec)}`;
+
+  function donneesCoupe(curseur?: [number, number]): GeoJSON.FeatureCollection {
+    const f: GeoJSON.Feature[] = [];
+    if (ptA && ptB) f.push({ type: "Feature", properties: { apercu: !profil }, geometry: { type: "LineString", coordinates: [ptA, ptB] } });
+    if (profil) {
+      const ok = profil.points.filter((p) => Number.isFinite(p.z));
+      const zA = ok[0].z, zB = ok[ok.length - 1].z;
+      // Comme sur le profil : pas d'étiquette collée à A ou à B.
+      const loin = (q: { d: number }) => q.d > profil!.longueur * 0.08 && q.d < profil!.longueur * 0.92;
+      if (loin(profil.haut) && profil.haut.z - Math.max(zA, zB) > 0.2) f.push({ type: "Feature", properties: { role: "haut", label: `▲ ${frc(profil.haut.z)} m` }, geometry: { type: "Point", coordinates: [profil.haut.lon, profil.haut.lat] } });
+      if (loin(profil.bas) && Math.min(zA, zB) - profil.bas.z > 0.2) f.push({ type: "Feature", properties: { role: "bas", label: `▼ ${frc(profil.bas.z)} m` }, geometry: { type: "Point", coordinates: [profil.bas.lon, profil.bas.lat] } });
+    }
+    if (curseur) f.push({ type: "Feature", properties: { role: "curseur" }, geometry: { type: "Point", coordinates: curseur } });
+    return { type: "FeatureCollection", features: f };
+  }
+  const majCarteCoupe = (curseur?: [number, number]) => (map.getSource("coupe") as maplibregl.GeoJSONSource | undefined)?.setData(donneesCoupe(curseur));
+
+  function placerPanneauCoupe(): void {
+    // Au-dessus du panneau du soleil quand il est ouvert.
+    coupeEl.style.bottom = soleilPanel.hidden ? "" : `${soleilPanel.offsetHeight + 46}px`;
+  }
+  new MutationObserver(placerPanneauCoupe).observe(soleilPanel, { attributes: true, attributeFilter: ["hidden"] });
+
+  function commencerCoupe(): void {
+    fermerCoupe();
+    trace = "A";
+    coupeBtn.setAttribute("aria-pressed", "true");
+    coupeAide.hidden = false;
+    coupeAide.firstChild!.textContent = "Cliquez le point A ";
+    map.getCanvas().style.cursor = "crosshair";
+  }
+  function fermerCoupe(): void {
+    trace = "aucun";
+    ptA = ptB = null;
+    profil = dessin = null;
+    demandeCoupe++;
+    mkA.remove();
+    mkB.remove();
+    coupeEl.hidden = true;
+    coupeAide.hidden = true;
+    coupeBtn.setAttribute("aria-pressed", "false");
+    map.getCanvas().style.cursor = "";
+    majCarteCoupe();
+  }
+  coupeBtn.addEventListener("click", () => (trace !== "aucun" || profil || ptA ? fermerCoupe() : commencerCoupe()));
+  q<HTMLButtonElement>("[data-coupe-nouvelle]").addEventListener("click", commencerCoupe);
+  q<HTMLButtonElement>("[data-coupe-fermer]").addEventListener("click", fermerCoupe);
+  q<HTMLButtonElement>("[data-coupe-reduire]").addEventListener("click", (ev) => {
+    const reduite = coupeEl.classList.toggle("reduite");
+    const b = ev.currentTarget as HTMLButtonElement;
+    b.textContent = reduite ? "+" : "–";
+    b.setAttribute("aria-expanded", String(!reduite));
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && trace !== "aucun") fermerCoupe();
+  });
+  map.on("click", (ev) => {
+    if (trace !== "aucun") evtCoupe = ev.originalEvent;
+    if (trace === "A") {
+      ptA = [ev.lngLat.lng, ev.lngLat.lat];
+      mkA.setLngLat(ptA).addTo(map);
+      trace = "B";
+      coupeAide.firstChild!.textContent = "Cliquez le point B ";
+    } else if (trace === "B") {
+      ptB = [ev.lngLat.lng, ev.lngLat.lat];
+      if (distanceM(ptA!, ptB) < 2) return;
+      mkB.setLngLat(ptB).addTo(map);
+      trace = "aucun";
+      coupeAide.hidden = true;
+      map.getCanvas().style.cursor = "";
+      void tracerCoupe();
+    }
+  });
+  map.on("mousemove", (ev) => {
+    if (trace !== "B" || !ptA) return;
+    ptB = [ev.lngLat.lng, ev.lngLat.lat];
+    majCarteCoupe();
+  });
+
+  async function tracerCoupe(): Promise<void> {
+    if (!ptA || !ptB) return;
+    const n = ++demandeCoupe;
+    profil = null;
+    majCarteCoupe();
+    coupeEl.hidden = false;
+    placerPanneauCoupe();
+    q<HTMLElement>(".at-coupe-chiffres").innerHTML = `<span class="at-note">Lecture des altitudes…</span>`;
+    coupeProfil.querySelector("svg")?.remove();
+    try {
+      // Bâtiments : ceux du périmètre, chargés au besoin.
+      if (!dernierBati && site) void chargerCouche("bati");
+      const p = await calculerProfil(ptA, ptB, sourceAlt, dernierBati);
+      if (n !== demandeCoupe) return;
+      profil = p;
+      afficherCoupe();
+      majCarteCoupe();
+    } catch (e) {
+      if (n !== demandeCoupe) return;
+      q<HTMLElement>(".at-coupe-chiffres").innerHTML = `<span class="at-note">${esc(e instanceof Error && e.message === "Coupe trop courte" ? "Coupe trop courte." : "Altitudes indisponibles (service de l'IGN). Déplacez un point pour réessayer.")}</span>`;
+    }
+  }
+  function afficherCoupe(): void {
+    if (!profil) return;
+    const p = profil;
+    const chiffre = (titre: string, valeur: string, detail = "") => `<div><span>${titre}</span><b>${valeur}</b>${detail ? `<i>${detail}</i>` : ""}</div>`;
+    const ok = p.points.filter((x) => Number.isFinite(x.z));
+    q<HTMLElement>(".at-coupe-chiffres").innerHTML = [
+      chiffre("Longueur", p.longueur >= 1000 ? `${frc(p.longueur / 1000, 2)} km` : `${frc(p.longueur, 0)} m`),
+      chiffre("Dénivelé A → B", `${signe(p.denivele)} m`, `${frc(ok[0].z)} → ${frc(ok[ok.length - 1].z)} m`),
+      chiffre("Montée · descente", `${signe(p.montee, 0)} · ${signe(-p.descente, 0)} m`, "cumulées"),
+      chiffre("Pente moyenne", `${signe(p.penteMoy)} %`),
+      chiffre("Pente max", `${frc(p.penteMax.pct)} %`, `à ${frc(p.penteMax.d, 0)} m de A`),
+      chiffre("Point haut · bas", `${frc(p.haut.z)} · ${frc(p.bas.z)} m`, `écart ${frc(p.haut.z - p.bas.z)} m`),
+    ].join("");
+    const lidarTxt =
+      p.source === "rgealti"
+        ? "RGE ALTI® (IGN, 1 m)"
+        : p.partLidar > 0.995
+          ? "LiDAR HD (IGN, MNT 50 cm)"
+          : p.partLidar > 0.005
+            ? `LiDAR HD sur ${Math.round(p.partLidar * 100)} % du tracé, complété par le RGE ALTI®`
+            : "LiDAR HD pas encore publié ici : RGE ALTI® (1 m)";
+    const nb = p.batiments.length;
+    q<HTMLElement>(".at-coupe-source").textContent =
+      `Altitudes : ${lidarTxt}, un point tous les ${frc(p.pas, 2)} m. ` +
+      (batiCoupe
+        ? dernierBati
+          ? `${nb} bâtiment${nb > 1 ? "s" : ""} coupé${nb > 1 ? "s" : ""} (BD TOPO®, hauteur depuis le point bas du terrain ; pointillés : hauteur supposée). Bâti chargé dans le périmètre d'analyse seulement.`
+          : "Bâti : activez la couche Bâtiments (périmètre d'analyse)."
+        : "") +
+      (p.manquantes ? ` ${p.manquantes} tuile(s) d'altitudes refusée(s) : profil incomplet.` : "");
+    redessinerProfil();
+  }
+  function redessinerProfil(): void {
+    if (!profil) return;
+    const W = Math.max(320, coupeProfil.clientWidth), H = 190;
+    dessin = dessinerProfil(profil, W, H, exagCoupe, batiCoupe, COULEURS_ECRAN);
+    coupeProfil.querySelector("svg")?.remove();
+    coupeProfil.insertAdjacentHTML("afterbegin", dessin.svg);
+  }
+  new ResizeObserver(() => redessinerProfil()).observe(coupeProfil);
+  coupeProfil.addEventListener("mousemove", (ev) => {
+    if (!profil || !dessin) return;
+    const r = coupeProfil.getBoundingClientRect();
+    const d = dessin.xVersD(ev.clientX - r.left);
+    if (d < 0 || d > profil.longueur) {
+      coupeBulle.hidden = true;
+      majCarteCoupe();
+      return;
+    }
+    const pt = profil.points[Math.min(profil.points.length - 1, Math.round(d / profil.pas))];
+    if (!Number.isFinite(pt.z)) return;
+    const pente = penteEn(profil, pt.d);
+    coupeBulle.hidden = false;
+    coupeBulle.innerHTML = `<b>${frc(pt.z)} m</b> · à ${frc(pt.d, 0)} m de A${Number.isFinite(pente) ? ` · pente ${signe(pente)} %` : ""}`;
+    const x = dessin.dVersX(pt.d);
+    coupeBulle.style.left = `${Math.min(r.width - coupeBulle.offsetWidth - 4, Math.max(4, x - coupeBulle.offsetWidth / 2))}px`;
+    coupeBulle.style.top = `${Math.max(2, dessin.zVersY(pt.z) - 34)}px`;
+    coupeProfil.style.setProperty("--curseur", `${x}px`);
+    coupeProfil.classList.add("survol");
+    majCarteCoupe([pt.lon, pt.lat]);
+  });
+  coupeProfil.addEventListener("mouseleave", () => {
+    coupeBulle.hidden = true;
+    coupeProfil.classList.remove("survol");
+    majCarteCoupe();
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-coupe-exag]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const v = b.dataset.coupeExag!;
+      exagCoupe = (v === "auto" ? "auto" : Number(v)) as ExagCoupe;
+      root.querySelectorAll("[data-coupe-exag]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      redessinerProfil();
+    }),
+  );
+  q<HTMLInputElement>("[data-coupe-bati]").addEventListener("change", (ev) => {
+    batiCoupe = (ev.target as HTMLInputElement).checked;
+    afficherCoupe();
+  });
+  const telecharger = (blob: Blob, nom: string) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = nom;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  root.querySelectorAll<HTMLButtonElement>("[data-coupe-export]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (!profil) return;
+      const nom = `coupe-${today()}`;
+      if (b.dataset.coupeExport === "csv") telecharger(new Blob(["﻿" + profilCsv(profil)], { type: "text/csv" }), `${nom}.csv`);
+      else telecharger(new Blob([dessinerProfil(profil, 1200, 380, exagCoupe, batiCoupe, COULEURS_EXPORT).svg], { type: "image/svg+xml" }), `${nom}.svg`);
     }),
   );
 
@@ -1278,6 +1606,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     }
   }
   map.on("click", "equipements", (ev) => {
+      if (trace !== "aucun" || ev.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
     const f = ev.features?.[0];
     if (!f) return;
     const pr = f.properties as { nom: string; titre: string; minutes: number };
@@ -1320,6 +1649,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   }
   for (const lid of ["patrimoine-mh", "patrimoine-abords", "patrimoine-sites", "patrimoine-spr"]) {
     map.on("click", lid, (ev) => {
+      if (trace !== "aucun" || ev.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
       const f = ev.features?.[0];
       if (!f) return;
       const pr = f.properties as { nom: string; titre: string; type: string };
@@ -1526,7 +1856,9 @@ export function createAtelier(root: HTMLElement): Atelier {
         etatCouche(id, "Chargement…");
         const data = await fetchBuildingsWithHeight(ctx, r);
         if (site !== ctx) return;
-        (map.getSource("bati") as maplibregl.GeoJSONSource).setData(batiGeoJSON(data));
+        dernierBati = batiGeoJSON(data);
+        (map.getSource("bati") as maplibregl.GeoJSONSource).setData(dernierBati);
+        if (profil) void tracerCoupe();
         const connues = data.buildings.filter((b) => b.heightM !== null).length;
         q<HTMLElement>("[data-bati-source]").textContent =
           data.source === "indisponible"
@@ -1573,6 +1905,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   // --- Fiche d'un bâtiment ----------------------------------------------------------
   for (const lid of ["bati-2d", "bati-3d"]) {
     map.on("click", lid, (e) => {
+      if (trace !== "aucun" || e.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
       const p = e.features?.[0]?.properties as Record<string, unknown> | undefined;
       if (!p) return;
       const lignes = [

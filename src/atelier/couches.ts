@@ -24,6 +24,8 @@ export interface CoucheDef {
   zoomMax?: number;
   /** Légende servie par le service (image), pour les couches WMS. */
   legende?: string;
+  /** Couche en niveaux de gris pouvant passer en mode « produit » (ombrages). */
+  produit?: boolean;
   /** Mention affichée sous le titre (limites, hypothèses). */
   note?: string;
 }
@@ -113,6 +115,7 @@ export const COUCHES: CoucheDef[] = [
     opacite: 0.75,
     tuiles: wmts({ layer: "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW", format: "image/png" }),
     zoomMax: 18,
+    produit: true,
     note: "Relief du sol nu au pas de 50 cm, sans bâtiments ni végétation : talus, murets, fossés, anciens tracés. Couverture LiDAR HD encore en cours dans certaines régions (zones vides).",
   },
   {
@@ -124,6 +127,7 @@ export const COUCHES: CoucheDef[] = [
     opacite: 0.75,
     tuiles: wmts({ layer: "IGNF_LIDAR-HD_MNS_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW", format: "image/png" }),
     zoomMax: 18,
+    produit: true,
     note: "Relief de tout ce que voit le laser : sol, bâtiments, arbres.",
   },
   {
@@ -135,6 +139,7 @@ export const COUCHES: CoucheDef[] = [
     opacite: 0.75,
     tuiles: wmts({ layer: "IGNF_LIDAR-HD_MNH_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW", format: "image/png" }),
     zoomMax: 18,
+    produit: true,
     note: "Hauteur au-dessus du sol (bâtiments, arbres) : utile pour lire la canopée et les volumes.",
   },
   {

@@ -99,6 +99,8 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
       map = m;
       renderer = new THREE.WebGLRenderer({ canvas: m.getCanvas(), context: gl as WebGLRenderingContext, antialias: true });
       renderer.autoClear = false;
+      // Ré-ajout après une perte du contexte WebGL : on reconstruit les arbres.
+      if (derniers) couche.setArbres(derniers.arbres, derniers.lat0, derniers.lon0);
     },
 
     render(_gl, args) {

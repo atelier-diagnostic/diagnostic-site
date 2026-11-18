@@ -480,6 +480,30 @@ export function createAtelier(root: HTMLElement): Atelier {
     }),
   );
 
+  // Perte du contexte WebGL (carte graphique saturée ou réinitialisée par le
+  // navigateur) : MapLibre restaure sa carte, mais pas les couches three.js ;
+  // on les ré-ajoute. Message tant que la carte n'est pas revenue.
+  const perte = document.createElement("div");
+  perte.className = "at-perte";
+  perte.hidden = true;
+  perte.innerHTML = `La carte graphique a interrompu l'affichage. Restauration en cours…
+    <button type="button">Recharger l'atelier</button>`;
+  perte.querySelector("button")!.addEventListener("click", () => location.reload());
+  canvasEl.parentElement?.appendChild(perte);
+  map.on("webglcontextlost", () => {
+    perte.hidden = false;
+  });
+  map.on("webglcontextrestored", () => {
+    for (const [id, c] of [["arbres-3d", coucheArbres], ["course-3d", coucheCourse]] as const) {
+      if (map.getLayer(id)) map.removeLayer(id);
+      map.addLayer(c, map.getLayer("carroyage") ? "carroyage" : undefined);
+    }
+    appliquer("arbres");
+    appliquer("course");
+    perte.hidden = true;
+    map.triggerRepaint();
+  });
+
   // --- Application de l'état aux couches ---------------------------------------
   const PROP: Record<string, string> = { hillshade: "hillshade-exaggeration", raster: "raster-opacity", fill: "fill-opacity", circle: "circle-opacity", line: "line-opacity", "fill-extrusion": "fill-extrusion-opacity" };
   function couchesMap(id: string): string[] {

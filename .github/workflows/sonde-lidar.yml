@@ -1,0 +1,28 @@
+name: sonde-lidar
+on: { push: { branches: [claude/sonde-lidar] } }
+jobs:
+  sonde:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install pyproj numpy
+      - shell: python
+        run: |
+          import urllib.request, numpy as np
+          from pyproj import Transformer
+          t = Transformer.from_crs(4326, 2154, always_xy=True)
+          t3 = Transformer.from_crs(4326, 3857, always_xy=True)
+          for nom, lon, lat in [("Arles", 4.6310, 43.6800), ("Marseille", 5.3790, 43.2880), ("Alpes", 6.87, 45.92)]:
+            x, y = t.transform(lon, lat); X, Y = t3.transform(lon, lat)
+            for layer, crs, (cx, cy) in [("IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93", "EPSG:2154", (x, y)),
+                                        ("IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93", "EPSG:3857", (X, Y)),
+                                        ("ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES", "EPSG:2154", (x, y))]:
+              d = 100
+              url = (f"https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS={layer}&STYLES=&FORMAT=image/x-bil;bits=32"
+                     f"&CRS={crs}&BBOX={cx-d},{cy-d},{cx+d},{cy+d}&WIDTH=400&HEIGHT=400")
+              try:
+                r = urllib.request.urlopen(url, timeout=60); b = r.read(); ct = r.headers.get("Content-Type")
+                a = np.frombuffer(b[:400*400*4], dtype="<f4") if len(b) >= 640000 else None
+                print(nom, layer[-30:], crs, r.status, ct, len(b), None if a is None else (float(a.min()), float(np.median(a)), float(a.max()), a[:3].tolist()))
+                if a is None: print(b[:300])
+              except Exception as e:
+                print(nom, layer[-30:], crs, "ERR", e, getattr(e, "read", lambda: b"")()[:300])

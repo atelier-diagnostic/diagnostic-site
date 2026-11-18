@@ -152,6 +152,8 @@ export function createAtelier(root: HTMLElement): Atelier {
   let exag: (typeof EXAGERATIONS)[number] = 1.5;
   let pasCourbes: (typeof PAS_COURBES)[number] = "auto";
   let numerosCadastre = false;
+  /** Fond composé posé sur la photo aérienne (le fond opaque IGN s'efface). */
+  let photoDessous = false;
   const themesIgn = new Map<ThemeIgn, boolean>(THEMES_IGN.map((t) => [t.id, t.actif]));
   let couchesIgn: CoucheIgn[] | null = null;
 
@@ -164,6 +166,7 @@ export function createAtelier(root: HTMLElement): Atelier {
             ${(Object.keys(FONDS) as Fond[]).map((k) => `<button type="button" data-fond="${k}" aria-pressed="${k === fond}">${FONDS[k].titre}</button>`).join("")}
           </div>
           <div class="at-themes-ign" hidden>
+            <label class="at-chip at-chip-fort"><input type="checkbox" data-photo-dessous> Photo aérienne dessous</label>
             ${THEMES_IGN.map((t) => `<label class="at-chip"><input type="checkbox" data-theme-ign="${t.id}" ${t.actif ? "checked" : ""}> ${t.titre}</label>`).join("")}
           </div>`
         : c.id === "cadastre"
@@ -564,14 +567,16 @@ export function createAtelier(root: HTMLElement): Atelier {
     const e = etat.get(id)!;
     if (id === "fond") {
       map.setLayoutProperty("fond-plan", "visibility", e.actif && fond === "plan" ? "visible" : "none");
-      map.setLayoutProperty("fond-photo", "visibility", e.actif && fond === "photo" ? "visible" : "none");
+      map.setLayoutProperty("fond-photo", "visibility", e.actif && (fond === "photo" || (fond === "compose" && photoDessous)) ? "visible" : "none");
       map.setPaintProperty("fond-plan", "raster-opacity", e.opacite);
-      map.setPaintProperty("fond-photo", "raster-opacity", e.opacite);
+      // Photo sous le fond composé : photo pleine, la réglette règle le Plan IGN posé dessus.
+      map.setPaintProperty("fond-photo", "raster-opacity", fond === "compose" && photoDessous ? 1 : e.opacite);
       root.querySelector<HTMLElement>(".at-themes-ign")!.hidden = fond !== "compose";
       if (fond === "compose" && !couchesIgn) void chargerFondIgn();
       for (const c of couchesIgn ?? []) {
         if (!map.getLayer(c.layer.id)) continue;
-        map.setLayoutProperty(c.layer.id, "visibility", e.actif && fond === "compose" && themesIgn.get(c.theme) ? "visible" : "none");
+        const theme = themesIgn.get(c.theme) && !(photoDessous && c.theme === "fond");
+        map.setLayoutProperty(c.layer.id, "visibility", e.actif && fond === "compose" && theme ? "visible" : "none");
         for (const prop of OPACITE[c.layer.type] ?? []) map.setPaintProperty(c.layer.id, prop, e.opacite);
       }
     }
@@ -744,6 +749,14 @@ export function createAtelier(root: HTMLElement): Atelier {
       etatCouche("fond", "Plan IGN vectoriel indisponible pour le moment.");
     }
   }
+  root.querySelector<HTMLInputElement>("[data-photo-dessous]")!.addEventListener("change", async (ev) => {
+    photoDessous = (ev.target as HTMLInputElement).checked;
+    // Le thème « Fond » (aplat opaque) masquerait la photo : décoché avec elle.
+    const fondCb = root.querySelector<HTMLInputElement>('[data-theme-ign="fond"]')!;
+    fondCb.disabled = photoDessous;
+    await pret;
+    appliquer("fond");
+  });
   root.querySelectorAll<HTMLInputElement>("[data-theme-ign]").forEach((cb) =>
     cb.addEventListener("change", async () => {
       themesIgn.set(cb.dataset.themeIgn as ThemeIgn, cb.checked);
@@ -1288,7 +1301,10 @@ export function createAtelier(root: HTMLElement): Atelier {
         if (!e.actif || c.id === "repere") continue;
         if (c.id === "fond") {
           if (fond !== "aucun")
-            items.push({ titre: `Fond : ${FONDS[fond].titre}`, source: fond === "plan" ? "IGN Plan" : fond === "compose" ? "Plan IGN vecteur" : "IGN BD ORTHO®" });
+            items.push({
+              titre: `Fond : ${FONDS[fond].titre}${fond === "compose" && photoDessous ? " sur photo aérienne" : ""}`,
+              source: fond === "plan" ? "IGN Plan" : fond === "compose" ? `Plan IGN vecteur${photoDessous ? ", IGN BD ORTHO®" : ""}` : "IGN BD ORTHO®",
+            });
           continue;
         }
         const it: ElementLegende = { titre: c.titre, source: c.source.replace(/ \(repli.*\)$/, "") };

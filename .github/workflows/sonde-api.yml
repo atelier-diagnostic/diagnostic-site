@@ -46,8 +46,8 @@ jobs:
             await p.evaluate(() => document.querySelector('[data-couche="bati"] .switch').click());
             await p.click('.at-replier').catch(()=>{});
             
-            await p.evaluate(() => document.querySelector('[data-numeros="oui"]').click());
-            await vue('cadastre-18', 18);
+            await p.evaluate(() => { const c = document.querySelector('[data-photo-dessous]'); c.checked = true; c.dispatchEvent(new Event('change')); });
+            await vue('photo-compose', 16.3);
             await b.close();
           })();
           JS

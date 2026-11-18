@@ -45,10 +45,8 @@ jobs:
             log('ign', await p.evaluate(() => { const m = document.querySelector('#vue-atelier').__carte; const ls = m.getStyle().layers.filter(l=>l.id.startsWith('ign-')); return [ls.length, ls.filter(l=>m.getLayoutProperty(l.id,'visibility')==='visible').length, document.querySelector('[data-couche="fond"] .at-etat')?.textContent]; }));
             await p.evaluate(() => document.querySelector('[data-couche="bati"] .switch').click());
             await p.click('.at-replier').catch(()=>{});
-            await vue('compose-15', 15.2);
-            await p.click('.at-replier').catch(()=>{});
-            await p.click('[data-numeros="oui"]');
-            await p.click('.at-replier').catch(()=>{});
+            
+            await p.evaluate(() => document.querySelector('[data-numeros="oui"]').click());
             await vue('cadastre-18', 18);
             await b.close();
           })();

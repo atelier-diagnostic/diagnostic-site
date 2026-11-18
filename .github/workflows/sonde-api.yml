@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { ref: claude/lidar }
+        with: { ref: claude/lidar-produit }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci && npm run build
@@ -40,11 +40,11 @@ jobs:
               await p.waitForTimeout(7000);
               await p.locator('.at-canvas canvas').screenshot({ path:`shots/${nom}.jpg`, quality:72, timeout:60000 }).catch(e=>log('capture', e.message.split('\n')[0]));
             };
-            await p.evaluate(() => { for (const id of ['fond','bati','arbres','cadastre','lidar-mnt']) document.querySelector(`[data-couche="${id}"] .switch`).click(); });
+            await p.evaluate(() => { for (const id of ['bati','arbres','cadastre','lidar-mns']) document.querySelector(`[data-couche="${id}"] .switch`).click(); document.querySelector('[data-fond="photo"]').click(); });
             await p.click('.at-replier').catch(()=>{});
-            await vue('lidar-mnt', 16.3);
-            await p.evaluate(() => { for (const id of ['lidar-mnt','lidar-mnh']) document.querySelector(`[data-couche="${id}"] .switch`).click(); });
-            await vue('lidar-mnh', 16.3);
+            await vue('mns-produit', 16.8);
+            await p.evaluate(() => document.querySelector('[data-produit="lidar-mns"][data-fusion="normal"]').click());
+            await vue('mns-normal', 16.8);
             await b.close();
           })();
           JS

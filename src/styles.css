@@ -858,17 +858,76 @@ body[data-vue="atelier"] { overflow: hidden; }
 .at-vues-msg[hidden] { display: none; }
 .at-lien { border: 0; background: none; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer; }
 
-/* --- Focale de la vue 3D -------------------------------------------------- */
-.at-focale {
-  position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 2;
-  display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px;
+/* --- Barre d'outils de la carte : 2D / 3D, focale, coupe ------------------ */
+.at-barre { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 6px; }
+.at-barre .at-mode { position: static; transform: none; }
+.at-outil {
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 11px; border: 0; border-radius: 999px;
   background: var(--panel); box-shadow: 0 0 0 1px var(--border), var(--shadow-chip);
-  font-size: 12px; color: var(--muted);
+  font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer; white-space: nowrap;
 }
+.at-outil svg { width: 15px; height: 15px; flex: none; }
+.at-outil:hover { color: var(--ink); }
+.at-outil[aria-pressed="true"], .at-outil[aria-expanded="true"] { background: var(--ink); color: var(--panel); box-shadow: none; }
+.at-focale { display: flex; align-items: center; gap: 6px; }
 .at-focale[hidden] { display: none; }
-.at-focale input { width: 120px; accent-color: var(--accent); }
-.at-focale output { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.at-focale-btn span { font-variant-numeric: tabular-nums; }
+.at-focale-reglette { width: 120px; accent-color: var(--accent); }
+.at-focale-reglette[hidden] { display: none; }
 @media (max-width: 800px) {
-  .at-focale { left: auto; right: 56px; transform: none; }
+  .at-barre { left: auto; right: 56px; transform: none; }
   .at-vues-form input { font-size: 16px; }
+  .at-outil span { display: none; }
+  .at-focale-btn span { display: inline; }
 }
+@media (max-width: 520px) { .at-barre { right: 52px; } }
+
+/* --- Vues repliables ---------------------------------------------------- */
+.at-vues-titre {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 0; border: 0; background: none;
+  font: inherit; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); cursor: pointer;
+}
+.at-vues-titre:hover { color: var(--ink); }
+.at-vues-active { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink-2); }
+.at-vues.repliee .at-chevron { transform: rotate(-90deg); }
+.at-vues.repliee .at-vues-liste, .at-vues.repliee .at-vues-msg { display: none; }
+.at-vues:not(.repliee) .at-vues-active { display: none; }
+
+/* --- Coupe de terrain ---------------------------------------------------- */
+:root { --coupe-terre: #e8dfcf; --coupe-trait: #6b4a2c; --coupe-bati: #d4d0c8; --coupe-bati-trait: #8a8478; }
+:root[data-theme="dark"] { --coupe-terre: #4a4135; --coupe-trait: #d6b48c; --coupe-bati: #5a5852; --coupe-bati-trait: #9a968c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --coupe-terre: #4a4135; --coupe-trait: #d6b48c; --coupe-bati: #5a5852; --coupe-bati-trait: #9a968c; } }
+.at-coupe-aide {
+  position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 2; padding: 6px 12px; border-radius: 999px;
+  background: var(--ink); color: var(--panel); font-size: 12.5px; box-shadow: var(--shadow-chip);
+}
+.at-coupe-aide .at-note { color: inherit; opacity: 0.7; }
+.at-coupe-aide[hidden] { display: none; }
+.at-coupe-pt {
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; cursor: grab;
+  background: #1d1d1f; color: #fff; font-size: 11.5px; font-weight: 700; box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0,0,0,.35);
+}
+.at-coupe {
+  position: absolute; left: 12px; right: 12px; bottom: 36px; z-index: 3; padding: 10px 12px 8px; border-radius: 14px;
+  background: var(--panel); box-shadow: 0 0 0 1px var(--border), var(--shadow-pop);
+}
+.at-coupe[hidden] { display: none; }
+.at-coupe-entete { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.at-coupe-entete h3 { margin: 0 4px 0 0; font-size: 14px; font-weight: 600; }
+.at-coupe-entete .seg-sm { align-self: center; }
+.at-coupe-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; font-size: 12px; }
+.at-coupe-chiffres { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 8px 0 2px; font-size: 11px; color: var(--muted); }
+.at-coupe-chiffres div { display: flex; flex-direction: column; }
+.at-coupe-chiffres b { font-size: 14px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.at-coupe-chiffres i { font-style: normal; font-size: 10.5px; }
+.at-coupe-profil { position: relative; height: 190px; }
+.at-coupe-profil svg { display: block; width: 100%; height: 190px; }
+.at-coupe-profil.survol::after { content: ""; position: absolute; top: 26px; bottom: 24px; left: var(--curseur); width: 1px; background: var(--ink-2); opacity: 0.6; pointer-events: none; }
+.at-coupe-bulle { position: absolute; z-index: 1; padding: 3px 8px; border-radius: 7px; background: var(--ink); color: var(--panel); font-size: 11.5px; white-space: nowrap; pointer-events: none; }
+.at-coupe-bulle[hidden] { display: none; }
+.at-coupe-source { margin-top: 2px; }
+@media (max-width: 520px) {
+  .at-coupe { left: 8px; right: 8px; bottom: 28px; padding: 8px; }
+  .at-coupe-actions { margin-left: 0; }
+}
+.at-coupe.reduite .at-coupe-profil, .at-coupe.reduite .at-coupe-source { display: none; }

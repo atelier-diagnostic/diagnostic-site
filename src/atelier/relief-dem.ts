@@ -100,11 +100,45 @@ function altitudesBrutes(url: string): Promise<Float32Array> {
   return p;
 }
 
+/** Source des altitudes : RGE ALTI® (1 m, partout) ou LiDAR HD (MNT 50 cm, couverture en cours). */
+export type SourceAlt = "rgealti" | "lidar";
+const COUCHES_ALT: Record<SourceAlt, string> = {
+  rgealti: "ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES",
+  // Publiée « LAMB93 » mais servie aussi en Web Mercator (vérifié le 18/11/2026).
+  lidar: "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93",
+};
+export const LIBELLES_ALT: Record<SourceAlt, string> = { rgealti: "RGE ALTI® 1 m", lidar: "LiDAR HD 50 cm" };
+
 /** Altitudes de la tuile Web Mercator (z, x, y), mêmes requêtes que le terrain. */
 export const TAILLE_TUILE = TAILLE;
-export function altitudesTuile(z: number, x: number, y: number): Promise<Float32Array> {
+export function altitudesTuile(z: number, x: number, y: number, source: SourceAlt = "rgealti"): Promise<Float32Array> {
   const C = 20037508.342789244;
   const t = (2 * C) / 2 ** z;
   const bbox = [-C + x * t, C - (y + 1) * t, -C + (x + 1) * t, C - y * t].join(",");
-  return altitudesBrutes(DEM_TUILES.replace("ignbil://", "https://").replace("{bbox-epsg-3857}", bbox));
+  const url = DEM_TUILES.replace("ignbil://", "https://").replace(COUCHES_ALT.rgealti, COUCHES_ALT[source]).replace("{bbox-epsg-3857}", bbox);
+  return altitudesBrutes(url);
+}
+
+const valide = (v: number) => Number.isFinite(v) && v > -1000 && v < 9000;
+
+/**
+ * Altitudes d'une tuile depuis la source choisie ; en LiDAR, les pixels hors
+ * couverture sont complétés par le RGE ALTI. `lidar` : part des pixels issus du LiDAR (0-1).
+ */
+export async function altitudesMixtes(z: number, x: number, y: number, source: SourceAlt): Promise<{ alt: Float32Array; lidar: number }> {
+  if (source === "rgealti") return { alt: await altitudesTuile(z, x, y), lidar: 0 };
+  let l: Float32Array | null = null;
+  try {
+    l = await altitudesTuile(z, x, y, "lidar");
+  } catch {
+    l = null; // LiDAR refusé : RGE ALTI seul
+  }
+  let n = 0;
+  if (l) for (let i = 0; i < l.length; i++) if (valide(l[i])) n++;
+  if (l && n === l.length) return { alt: l, lidar: 1 };
+  const r = await altitudesTuile(z, x, y);
+  if (!l || n === 0) return { alt: r, lidar: 0 };
+  const alt = new Float32Array(l.length);
+  for (let i = 0; i < l.length; i++) alt[i] = valide(l[i]) ? l[i] : r[i];
+  return { alt, lidar: n / l.length };
 }

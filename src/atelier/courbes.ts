@@ -1,6 +1,7 @@
 // Courbes de niveau autour du site, calculées dans le navigateur à partir des
 // altitudes du RGE ALTI® (les mêmes tuiles que le relief 3D, zoom 15 : un
-// point tous les 3 à 4 m environ en France métropolitaine).
+// point tous les 3 à 4 m environ en France métropolitaine) ou du LiDAR HD
+// (MNT 50 cm, complété par le RGE ALTI hors couverture).
 //
 // Méthode : grille d'altitudes assemblée, lissée (deux passes de moyenne
 // 3 × 3, pour gommer le bruit au mètre près sans déplacer les formes),
@@ -8,9 +9,15 @@
 // Équidistance choisie, ou automatique (une vingtaine de courbes au plus
 // sur l'emprise). Une courbe sur cinq est maîtresse (plus épaisse, cotée).
 
-import { altitudesTuile, TAILLE_TUILE } from "./relief-dem";
+import { altitudesMixtes, TAILLE_TUILE, type SourceAlt } from "./relief-dem";
 
-const ZOOM = 15;
+// RGE ALTI : zoom 15 (≈ 3,5 m par point). LiDAR HD : plus fin quand l'emprise
+// le permet (zoom 17 ≈ 0,9 m, 16 ≈ 1,7 m), avec un lissage plus appuyé contre le
+// bruit au décimètre (murets, bordures, talus de voirie).
+function zoomPour(source: SourceAlt, demiCoteM: number): number {
+  if (source === "rgealti") return 15;
+  return demiCoteM <= 500 ? 17 : demiCoteM <= 1000 ? 16 : 15;
+}
 const C = 20037508.342789244;
 export const EQUIDISTANCES = [0.5, 1, 2, 5, 10, 20, 25, 50, 100];
 
@@ -30,6 +37,10 @@ export interface Courbes {
   max: number;
   /** Tuiles d'altitudes non obtenues (courbes incomplètes). */
   manquantes: number;
+  /** Part de l'emprise couverte par le LiDAR HD (0-1) ; 0 avec le RGE ALTI. */
+  partLidar: number;
+  /** Taille d'un point de la grille (m au sol). */
+  pasM: number;
 }
 
 /** Équidistance automatique : la plus petite donnant au plus ~20 courbes. */
@@ -38,7 +49,8 @@ export function equidistanceAuto(min: number, max: number): number {
   return EQUIDISTANCES.find((e) => amplitude / e <= 20) ?? 100;
 }
 
-export async function calculerCourbes(lat: number, lon: number, demiCoteM: number, equidistance: number | "auto"): Promise<Courbes> {
+export async function calculerCourbes(lat: number, lon: number, demiCoteM: number, equidistance: number | "auto", source: SourceAlt = "rgealti"): Promise<Courbes> {
+  const ZOOM = zoomPour(source, demiCoteM);
   const [cx, cy] = versMerc(lon, lat);
   // Mètres Mercator par mètre au sol à cette latitude.
   const k = 1 / Math.cos((lat * Math.PI) / 180);
@@ -52,11 +64,13 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
 
   z.fill(NaN);
   let manquantes = 0;
+  let lidar = 0;
   const tuiles: Promise<void>[] = [];
   for (let ty = y0; ty <= y1; ty++)
     for (let tx = x0; tx <= x1; tx++)
       tuiles.push(
-        altitudesTuile(ZOOM, tx, ty).then((a) => {
+        altitudesMixtes(ZOOM, tx, ty, source).then(({ alt: a, lidar: l }) => {
+          lidar += l;
           const ox = (tx - x0) * TAILLE_TUILE, oy = (ty - y0) * TAILLE_TUILE;
           for (let j = 0; j < TAILLE_TUILE; j++)
             for (let i = 0; i < TAILLE_TUILE; i++) {
@@ -71,7 +85,10 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
   if (manquantes === tuiles.length) throw new Error("Altitudes IGN indisponibles");
 
   // Lissage : deux passes de moyenne 3 × 3 (les valeurs manquantes sont ignorées).
-  for (let passe = 0; passe < 2; passe++) {
+  const passes = ZOOM >= 17 ? 4 : ZOOM === 16 ? 3 : 2;
+  const partLidar = lidar / tuiles.length;
+  const pasM = (2 * C) / 2 ** ZOOM / TAILLE_TUILE / k;
+  for (let passe = 0; passe < passes; passe++) {
     const s = new Float32Array(W * H);
     for (let j = 0; j < H; j++)
       for (let i = 0; i < W; i++) {
@@ -105,7 +122,7 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
       if (v < min) min = v;
       if (v > max) max = v;
     }
-  if (!Number.isFinite(min)) return { geojson: { type: "FeatureCollection", features: [] }, equidistance: 0, min: 0, max: 0, manquantes };
+  if (!Number.isFinite(min)) return { geojson: { type: "FeatureCollection", features: [] }, equidistance: 0, min: 0, max: 0, manquantes, partLidar, pasM };
   const eq = equidistance === "auto" ? equidistanceAuto(min, max) : equidistance;
 
   // Point d'une arête : centre de pixel (i + 0,5, j + 0,5) en Mercator, puis lon/lat.
@@ -124,7 +141,7 @@ export async function calculerCourbes(lat: number, lon: number, demiCoteM: numbe
       });
     }
   }
-  return { geojson: { type: "FeatureCollection", features }, equidistance: eq, min, max, manquantes };
+  return { geojson: { type: "FeatureCollection", features }, equidistance: eq, min, max, manquantes, partLidar, pasM };
 }
 
 /** Carrés marchants : lignes de cote h, en coordonnées de grille (i, j). */

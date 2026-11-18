@@ -50,6 +50,33 @@ function outerRings(geometry: IgnBatimentFeature["geometry"] | undefined): numbe
   return rings.filter((r) => Array.isArray(r) && r.length >= 3);
 }
 
+// Le WFS plafonne chaque réponse (COUNT=5000) : en ville dense, un périmètre
+// de 600 m dépasse ce nombre et le reste était silencieusement perdu (place
+// Estrangin, Marseille, 18/11). L'emprise est donc découpée en dalles
+// (≈ 400 m de côté au plus) demandées en parallèle, chaque dalle paginée
+// (STARTINDEX) tant qu'une page revient pleine ; les bâtiments à cheval sur
+// deux dalles sont dédoublonnés par leur identifiant (cleabs).
+const PAGE = 5000;
+const DALLE_M = 400;
+const MAX_PAGES = 10;
+
+async function dalle(bbox: { minLat: number; minLon: number; maxLat: number; maxLon: number }, radiusM: number): Promise<IgnBatimentFeature[]> {
+  const tout: IgnBatimentFeature[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = ignWfsBatiments(bbox) + `&SORTBY=cleabs&STARTINDEX=${page * PAGE}`;
+    const data = await fetchJson<IgnBatimentResponse>(url, {
+      cacheKey: `ign-wfs:batiments-${radiusM}m`,
+      ttlMs: 30 * 24 * 60 * 60 * 1000,
+      timeoutMs: 30_000,
+      retries: 2,
+    });
+    const f = data.features ?? [];
+    tout.push(...f);
+    if (f.length < PAGE) break;
+  }
+  return tout;
+}
+
 /** Retourne null si le WFS échoue ou ne renvoie rien d'exploitable (déclenche le repli OSM). */
 export async function fetchBdTopoBuildings(
   lat: number,
@@ -58,18 +85,30 @@ export async function fetchBdTopoBuildings(
 ): Promise<BuildingFootprint[] | null> {
   try {
     const bbox = bboxAroundMeters(lat, lon, radiusM);
-    const url = ignWfsBatiments(bbox);
-    const data = await fetchJson<IgnBatimentResponse>(url, {
-      cacheKey: `ign-wfs:batiments-${radiusM}m`,
-      ttlMs: 30 * 24 * 60 * 60 * 1000,
-      timeoutMs: 25_000,
-      retries: 2,
-    });
+    const n = Math.max(1, Math.ceil((2 * radiusM) / DALLE_M));
+    const dLat = (bbox.maxLat - bbox.minLat) / n, dLon = (bbox.maxLon - bbox.minLon) / n;
+    const emprises: Parameters<typeof dalle>[0][] = [];
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        emprises.push({ minLat: bbox.minLat + i * dLat, maxLat: bbox.minLat + (i + 1) * dLat, minLon: bbox.minLon + j * dLon, maxLon: bbox.minLon + (j + 1) * dLon });
+    // Quatre dalles à la fois : le WFS de l'IGN sature vite.
+    const features: IgnBatimentFeature[] = [];
+    let suivante = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(4, emprises.length) }, async () => {
+        while (suivante < emprises.length) features.push(...(await dalle(emprises[suivante++], radiusM)));
+      }),
+    );
+    if (features.length === 0) return null;
 
-    if (!data.features || data.features.length === 0) return null;
-
+    const vus = new Set<string>();
     const buildings: BuildingFootprint[] = [];
-    for (const f of data.features) {
+    for (const f of features) {
+      const id = typeof f.properties?.cleabs === "string" ? f.properties.cleabs : null;
+      if (id) {
+        if (vus.has(id)) continue;
+        vus.add(id);
+      }
       const heightM = extractHeight(f.properties);
       const info = extractInfo(f.properties ?? {});
       for (const ring of outerRings(f.geometry)) {

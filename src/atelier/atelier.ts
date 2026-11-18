@@ -154,6 +154,8 @@ export function createAtelier(root: HTMLElement): Atelier {
   let numerosCadastre = false;
   /** Fond composé posé sur la photo aérienne (le fond opaque IGN s'efface). */
   let photoDessous = false;
+  /** Réglages propres à la photo aérienne (0-1) : opacité sous le composé, couleurs, éclaircissement. */
+  const photo = { opacite: 1, couleurs: 1, eclaircir: 0 };
   const themesIgn = new Map<ThemeIgn, boolean>(THEMES_IGN.map((t) => [t.id, t.actif]));
   let couchesIgn: CoucheIgn[] | null = null;
 
@@ -164,6 +166,14 @@ export function createAtelier(root: HTMLElement): Atelier {
       c.id === "fond"
         ? `<div class="segmented seg-sm" role="group" aria-label="Fond de carte">
             ${(Object.keys(FONDS) as Fond[]).map((k) => `<button type="button" data-fond="${k}" aria-pressed="${k === fond}">${FONDS[k].titre}</button>`).join("")}
+          </div>
+          <div class="at-photo-reglages" hidden>
+            <label class="at-opacite" data-ligne-photo-opacite><span>Photo</span>
+              <input type="range" data-photo="opacite" min="0" max="100" step="5" value="100" aria-label="Opacité de la photo aérienne"><output>100 %</output></label>
+            <label class="at-opacite"><span>Couleurs</span>
+              <input type="range" data-photo="couleurs" min="0" max="100" step="5" value="100" aria-label="Couleurs de la photo (0 : noir et blanc)"><output>100 %</output></label>
+            <label class="at-opacite"><span>Éclaircir</span>
+              <input type="range" data-photo="eclaircir" min="0" max="100" step="5" value="0" aria-label="Éclaircir la photo"><output>0 %</output></label>
           </div>
           <div class="at-themes-ign" hidden>
             <label class="at-chip at-chip-fort"><input type="checkbox" data-photo-dessous> Photo aérienne dessous</label>
@@ -570,7 +580,14 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLayoutProperty("fond-photo", "visibility", e.actif && (fond === "photo" || (fond === "compose" && photoDessous)) ? "visible" : "none");
       map.setPaintProperty("fond-plan", "raster-opacity", e.opacite);
       // Photo sous le fond composé : photo pleine, la réglette règle le Plan IGN posé dessus.
-      map.setPaintProperty("fond-photo", "raster-opacity", fond === "compose" && photoDessous ? 1 : e.opacite);
+      map.setPaintProperty("fond-photo", "raster-opacity", fond === "compose" && photoDessous ? photo.opacite : e.opacite);
+      // Effet sobre sur mesure : désaturation (noir et blanc à 0 %) et éclaircissement.
+      map.setPaintProperty("fond-photo", "raster-saturation", photo.couleurs - 1);
+      map.setPaintProperty("fond-photo", "raster-brightness-min", photo.eclaircir * 0.85);
+      const photoVisible = fond === "photo" || (fond === "compose" && photoDessous);
+      root.querySelector<HTMLElement>(".at-photo-reglages")!.hidden = !photoVisible;
+      // En mode « Photo », la réglette principale règle déjà l'opacité.
+      root.querySelector<HTMLElement>("[data-ligne-photo-opacite]")!.hidden = fond === "photo";
       root.querySelector<HTMLElement>(".at-themes-ign")!.hidden = fond !== "compose";
       if (fond === "compose" && !couchesIgn) void chargerFondIgn();
       for (const c of couchesIgn ?? []) {
@@ -718,8 +735,8 @@ export function createAtelier(root: HTMLElement): Atelier {
     const id = el.dataset.couche!;
     const e = etat.get(id)!;
     const sw = el.querySelector<HTMLInputElement>(".switch")!;
-    const range = el.querySelector<HTMLInputElement>('input[type="range"]')!;
-    const out = el.querySelector("output")!;
+    const range = el.querySelector<HTMLInputElement>(':scope > .at-reglages > .at-opacite input[type="range"]')!;
+    const out = el.querySelector(":scope > .at-reglages > .at-opacite output")!;
     sw.addEventListener("change", async () => {
       e.actif = sw.checked;
       el.classList.toggle("on", e.actif);
@@ -749,6 +766,14 @@ export function createAtelier(root: HTMLElement): Atelier {
       etatCouche("fond", "Plan IGN vectoriel indisponible pour le moment.");
     }
   }
+  root.querySelectorAll<HTMLInputElement>("[data-photo]").forEach((r) =>
+    r.addEventListener("input", async () => {
+      photo[r.dataset.photo as keyof typeof photo] = Number(r.value) / 100;
+      r.parentElement!.querySelector("output")!.textContent = `${r.value} %`;
+      await pret;
+      appliquer("fond");
+    }),
+  );
   root.querySelector<HTMLInputElement>("[data-photo-dessous]")!.addEventListener("change", async (ev) => {
     photoDessous = (ev.target as HTMLInputElement).checked;
     // Le thème « Fond » (aplat opaque) masquerait la photo : décoché avec elle.

@@ -1,0 +1,13 @@
+name: sonde-curl
+on: { push: { branches: [claude/sonde-api] } }
+jobs:
+  curl:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set +e
+          B='https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=BDTOPO_V3:batiment&OUTPUTFORMAT=application/json&SRSNAME=EPSG:4326&COUNT=5000&BBOX=5.3712,43.2857,5.3860,43.2965,EPSG:4326'
+          for q in '' '&SORTBY=cleabs&STARTINDEX=0' '&SORTBY=cleabs&STARTINDEX=5000'; do
+            curl -s "$B$q" -o r.json; python3 -c "
+          import json;d=json.load(open('r.json'));print('$q', 'matched',d.get('numberMatched'),'returned',d.get('numberReturned'),len(d['features']), d['features'][0]['properties'].get('cleabs') if d['features'] else None)" || head -c 400 r.json; echo
+          done

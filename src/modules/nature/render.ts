@@ -56,7 +56,7 @@ function blocCanopee(r: NatureResult): string {
   return `
     <div class="indicators">
       ${indicator("Indice de canopée", `${fr(l.canopeePct)} %`, "végétation ≥ 3 m, mesurée")}
-      ${indicator("Arbres détectés", `${l.nbArbres}`, `${fr(l.densiteHa)} / ha`)}
+      ${l.arbresDetectes ? indicator("Arbres détectés", `${l.nbArbres}`, `${fr(l.densiteHa)} / ha`) : indicator("Arbres détectés", "n.d.", "cercle > 1,1 km : canopée seule")}
       ${indicator("Hauteur moyenne", `${fr(l.hMoy)} m`, `90 % sous ${fr(l.hP90)} m`)}
       ${indicator("Plus grand arbre", `${fr(l.hMax)} m`)}
       ${indicator("Volume de houppiers", `${fr(l.volumeM3 / 1000, 0)} k m³`, "approché")}

@@ -43,8 +43,10 @@ export interface ArbreOsm {
   hauteur?: number;
   /** Diamètre du houppier (m), balise diameter_crown. */
   couronne?: number;
-  /** Résineux (leaf_type=needleleaved). */
+  /** Résineux (leaf_type=needleleaved ; CoSIA « conifère » pour les arbres LiDAR). */
   resineux?: boolean;
+  /** Hauteur et houppier mesurés (LiDAR HD) : le port suit les proportions réelles. */
+  mesure?: boolean;
 }
 
 const nombre = (v?: string) => {

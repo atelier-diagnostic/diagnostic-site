@@ -14,6 +14,8 @@ import maplibregl from "maplibre-gl";
 import type { ArbreOsm } from "../modules/soleil/fetch";
 
 const VERTS = [0x2d6b28, 0x3a7a30, 0x4a8a38, 0x1d5620, 0x557f34];
+/** Verts des pins : plus sombres et plus bleutés. */
+const VERTS_PINS = [0x2c5a33, 0x335f2e, 0x284f2c, 0x3b6a3a];
 const MAX_ARBRES = 1500;
 
 /** Pseudo-aléa stable dans [0, 1[, tiré des coordonnées. */
@@ -31,8 +33,11 @@ export interface GabaritArbre {
   sy: number;
   cy: number;
   resineux: boolean;
+  /** Port : houppier rond (feuillus), cône (résineux élancés) ou ombrelle (pins parasols, résineux larges). */
+  forme: "rond" | "cone" | "parasol" | "etale";
 }
 export function gabaritArbre(a: ArbreOsm): GabaritArbre {
+  if (a.mesure && a.hauteur && a.couronne) return gabaritMesure(a.hauteur, a.couronne / 2, !!a.resineux);
   const r1 = alea(a.lat, a.lon, 1);
   const r2 = alea(a.lat, a.lon, 2);
   // Proportions d'un arbre urbain adulte (retours du 13/11) : fût court,
@@ -45,7 +50,49 @@ export function gabaritArbre(a: ArbreOsm): GabaritArbre {
   // à peu près rond (ni galette, ni fuseau).
   const sy = resineux ? (h - fut) / 2.2 : Math.max(rayon * 0.75, Math.min(rayon * 1.15, (h - fut) / 2));
   const cy = resineux ? fut + 1.1 * sy : Math.max(fut + sy * 0.8, h - sy);
-  return { h, rayon, fut, sy, cy, resineux };
+  return { h, rayon, fut, sy, cy, resineux, forme: resineux ? "cone" : "rond" };
+}
+
+/**
+ * Port d'un arbre mesuré (LiDAR) : on respecte la hauteur et l'emprise du
+ * houppier réelles, sans le ramener à une boule. L'essence n'est pas connue :
+ * le port se déduit des proportions mesurées (retours du 19/11, Bormes-les-Mimosas).
+ *  - résineux très large (houppier ≥ 0,8 × hauteur) : ombrelle du pin parasol,
+ *    fût haut et houppier plat ;
+ *  - résineux large (0,5 à 0,8) : port étalé du pin d'Alep, houppier plus
+ *    épais et irrégulier, un peu incliné ;
+ *  - résineux élancé : cône ;
+ *  - feuillu : houppier ellipsoïdal, aplati quand il est plus large que haut.
+ */
+function gabaritMesure(hm: number, rayonM: number, resineux: boolean): GabaritArbre {
+  const h = Math.max(3, Math.min(45, hm));
+  const rayon = Math.max(1, Math.min(16, rayonM));
+  if (resineux && (2 * rayon) / h >= 0.8) {
+    const sy = Math.max(1, Math.min(h * 0.17, rayon * 0.5));
+    const cy = h - sy * 0.9;
+    return { h, rayon, fut: cy - sy * 0.35, sy, cy, resineux, forme: "parasol" };
+  }
+  if (resineux && (2 * rayon) / h >= 0.5) {
+    const sy = Math.max(1.2, Math.min(h * 0.24, rayon * 0.7));
+    const cy = h - sy;
+    return { h, rayon, fut: cy - sy * 0.6, sy, cy, resineux, forme: "etale" };
+  }
+  if (resineux) {
+    const fut = h * 0.15;
+    const sy = (h - fut) / 2.2;
+    return { h, rayon, fut, sy, cy: fut + 1.1 * sy, resineux, forme: "cone" };
+  }
+  const fut = h * 0.22;
+  const sy = Math.max(rayon * 0.5, Math.min(rayon * 1.1, (h - fut) / 2));
+  return { h, rayon, fut, sy, cy: Math.max(fut + sy * 0.7, h - sy), resineux, forme: "rond" };
+}
+
+/** Houppier en ombrelle (pin parasol) : dessous plat, dôme bas, facetté. Hauteur unité ≈ 1,25 (de −0,35 à 0,9). */
+function geometrieParasol(): THREE.BufferGeometry {
+  const profil = [
+    [0, -0.35], [0.7, -0.35], [0.97, -0.2], [1, 0.05], [0.9, 0.35], [0.65, 0.65], [0.3, 0.86], [0, 0.9],
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+  return new THREE.LatheGeometry(profil, 10);
 }
 
 export interface CoucheArbres3D extends maplibregl.CustomLayerInterface {
@@ -77,6 +124,7 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
   const geoTronc = new THREE.CylinderGeometry(0.14, 0.22, 1, 7, 1).translate(0, 0.5, 0);
   const geoFeuillus = [new THREE.IcosahedronGeometry(1, 1), new THREE.DodecahedronGeometry(1, 0)];
   const geoResineux = new THREE.ConeGeometry(1, 2.2, 8, 2);
+  const geoParasol = geometrieParasol();
 
   let origine = maplibregl.MercatorCoordinate.fromLngLat([0, 0], 0);
   let echelle = origine.meterInMercatorCoordinateUnits();
@@ -136,7 +184,7 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
       const liste = arbres.slice(0, MAX_ARBRES);
 
       const troncs = new THREE.InstancedMesh(geoTronc, matTronc, liste.length);
-      const parForme = [geoFeuillus[0], geoFeuillus[1], geoResineux].map((g) => ({ g, items: [] as THREE.Matrix4[], couleurs: [] as THREE.Color[] }));
+      const parForme = [geoFeuillus[0], geoFeuillus[1], geoResineux, geoParasol].map((g) => ({ g, items: [] as THREE.Matrix4[], couleurs: [] as THREE.Color[] }));
       const m4 = new THREE.Matrix4();
       const q = new THREE.Quaternion();
       const axeY = new THREE.Vector3(0, 1, 0);
@@ -147,16 +195,26 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
         const r1 = alea(a.lat, a.lon, 1);
         const r2 = alea(a.lat, a.lon, 2);
         const r3 = alea(a.lat, a.lon, 3);
-        const { rayon, fut, sy, cy } = gabaritArbre(a);
+        const { rayon, fut, sy, cy, forme: port } = gabaritArbre(a);
         const y0 = sol?.(a.lon, a.lat) ?? 0;
 
-        m4.compose(new THREE.Vector3(x, y0, z), q.identity(), new THREE.Vector3(1.2 + rayon * 0.08, fut + rayon * 0.5, 1.2 + rayon * 0.08));
+        // Fût jusque dans le houppier ; plus épais pour les grands sujets.
+        const ep = port === "parasol" || port === "etale" ? 2 + rayon * 0.12 : 1.2 + rayon * 0.08;
+        // Pin d'Alep : fût et houppier légèrement penchés (jusqu'à 10°), direction stable.
+        const penche = port === "etale" ? (r3 - 0.5) * 0.35 : 0;
+        const qT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(r1 * 6.28), 0, Math.sin(r1 * 6.28)), penche);
+        m4.compose(new THREE.Vector3(x, y0, z), qT, new THREE.Vector3(ep, port === "parasol" ? fut + sy * 0.3 : port === "etale" ? fut + sy * 0.5 : fut + rayon * 0.5, ep));
         troncs.setMatrixAt(i, m4);
 
-        const forme = a.resineux ? parForme[2] : parForme[r3 < 0.55 ? 0 : 1];
+        const forme = port === "parasol" ? parForme[3] : port === "cone" ? parForme[2] : port === "etale" ? parForme[1] : parForme[r3 < 0.55 ? 0 : 1];
         q.setFromAxisAngle(axeY, r1 * Math.PI * 2);
-        forme.items.push(new THREE.Matrix4().compose(new THREE.Vector3(x, y0 + cy, z), q.clone(), new THREE.Vector3(rayon, sy, rayon)));
-        forme.couleurs.push(new THREE.Color(VERTS[Math.floor(r2 * VERTS.length)]));
+        // Houppier déporté du côté où penche le fût ; port étalé : un peu irrégulier (axes inégaux).
+        const dep = Math.sin(penche) * cy;
+        const pos = new THREE.Vector3(x - Math.sin(r1 * 6.28) * dep, y0 + cy, z + Math.cos(r1 * 6.28) * dep);
+        const sx = port === "etale" ? rayon * (0.9 + r2 * 0.2) : rayon, sz = port === "etale" ? rayon * (1.1 - r2 * 0.2) : rayon;
+        forme.items.push(new THREE.Matrix4().compose(pos, q.clone(), new THREE.Vector3(sx, sy, sz)));
+        const teintes = port === "rond" ? VERTS : VERTS_PINS;
+        forme.couleurs.push(new THREE.Color(teintes[Math.floor(r2 * teintes.length)]));
       });
       troncs.instanceMatrix.needsUpdate = true;
       // La caméra est la matrice de MapLibre : le tri par champ de vision de

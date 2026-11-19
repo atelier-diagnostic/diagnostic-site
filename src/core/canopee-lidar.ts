@@ -8,6 +8,11 @@
 //    lampadaires, véhicules.
 // Canopée = pixel végétal d'au moins 3 m de haut.
 //
+// Emprise : au plus 36 tuiles par source (pixels de 0,43 m jusqu'à ~280 m de
+// rayon, 0,9 m jusqu'à ~560 m, 1,7 m jusqu'à ~1,1 km, 3,5 m au-delà, où l'on
+// ne mesure plus que la canopée, sans arbres individuels). Les tuiles refusées
+// réduisent la part couverte, annoncée, sans faire échouer l'analyse.
+//
 // Arbres : sommets locaux de la canopée (fenêtre variable avec la hauteur,
 // Popescu et Wynne 2004 : diamètre = 2,51 + 0,009 h²), puis houppier de
 // chaque sommet par croissance de région (pixels assez hauts, pas trop loin).
@@ -23,6 +28,7 @@ const C = 20037508.342789244;
 export const H_CANOPEE = 3;
 const H_SOMMET = 4;
 const VEGETAL = new Set(["feuillu", "conifere", "broussaille"].map((id) => CLASSES_COSIA.findIndex((c) => c.id === id)));
+const CONIFERE = CLASSES_COSIA.findIndex((c) => c.id === "conifere");
 
 /** Classes de hauteur de la canopée (m) et leurs teintes (rampe verte, du clair au foncé). */
 export const CLASSES_HAUTEUR = [
@@ -39,6 +45,9 @@ export interface ArbreLidar {
   hauteur: number;
   /** Diamètre du houppier (m), d'après la surface de canopée rattachée. */
   couronne: number;
+  /** Conifère d'après CoSIA au sommet. */
+  resineux: boolean;
+  mesure: true;
 }
 
 export interface CanopeeLidar {
@@ -61,17 +70,43 @@ export interface CanopeeLidar {
   arbres: ArbreLidar[];
   /** Arbres détectés pour 1 ha de cercle couvert. */
   densiteHa: number;
+  /** false : cercle trop grand pour détecter les arbres un à un (pixels de plus de 1,8 m) ; canopée seule. */
+  arbresDetectes: boolean;
   millesimeCosia: string;
   /** Image de la canopée (RGBA, teinte selon la hauteur) et son emprise lon/lat [ouest, sud, est, nord]. */
   image: { largeur: number; hauteur: number; rgba: Uint8ClampedArray; emprise: [number, number, number, number] };
+  /** Surface de la canopée pour le volume 3D : hauteurs (m, 0 hors canopée) sur une grille d'environ 1 m, coin nord-ouest et pas en lon/lat. */
+  surface: { largeur: number; hauteur: number; h: Float32Array; ouest: number; nord: number; pasLon: number; pasLat: number; pasM: number };
 }
 
 const versMerc = (lon: number, lat: number) => [(lon * C) / 180, (Math.log(Math.tan(((90 + lat) * Math.PI) / 360)) * C) / Math.PI];
 const depuisMerc = (x: number, y: number): [number, number] => [(x / C) * 180, (Math.atan(Math.exp((y / C) * Math.PI)) * 360) / Math.PI - 90];
 
-export async function analyserCanopee(lat: number, lon: number, rayonM: number): Promise<CanopeeLidar> {
-  const z = rayonM <= 200 ? 18 : rayonM <= 500 ? 17 : 16;
+/** Tuiles au plus par source : au-delà, le WMS du LiDAR (calculé à la volée depuis le 50 cm) devient très lent. */
+const MAX_TUILES = 36;
+/** Au-delà de cette taille de pixel, les sommets d'arbres ne sont plus fiables : canopée seule. */
+const PIXEL_MAX_ARBRES = 1.8;
+
+const memo = new Map<string, Promise<CanopeeLidar>>();
+/**
+ * Analyse mémorisée par point et rayon : le diagnostic et l'atelier partagent
+ * le même calcul (et les mêmes requêtes). `progression` : tuiles reçues / total.
+ */
+export function analyserCanopee(lat: number, lon: number, rayonM: number, progression?: (faites: number, total: number) => void): Promise<CanopeeLidar> {
+  const cle = `${lat.toFixed(5)},${lon.toFixed(5)},${Math.round(rayonM)}`;
+  const deja = memo.get(cle);
+  if (deja) return deja;
+  const p = calculer(lat, lon, rayonM, progression);
+  memo.set(cle, p);
+  p.catch(() => memo.delete(cle));
+  return p;
+}
+
+async function calculer(lat: number, lon: number, rayonM: number, progression?: (faites: number, total: number) => void): Promise<CanopeeLidar> {
   const k = 1 / Math.cos((lat * Math.PI) / 180); // mètres Mercator par mètre au sol
+  // Zoom le plus fin (0,43 m au zoom 18) qui tient en MAX_TUILES tuiles.
+  let z = 18;
+  while (z > 14 && (Math.ceil((2 * rayonM * k) / ((2 * C) / 2 ** z)) + 1) ** 2 > MAX_TUILES) z--;
   const t = (2 * C) / 2 ** z;
   const pxMerc = t / TAILLE_TUILE;
   const pixelM = pxMerc / k;
@@ -83,15 +118,17 @@ export async function analyserCanopee(lat: number, lon: number, rayonM: number):
   const W = nx * TAILLE_TUILE, H = ny * TAILLE_TUILE;
   const h = new Float32Array(W * H).fill(NaN);
   const veg = new Uint8Array(W * H).fill(255); // 255 : inconnu ; 1 végétal ; 0 autre
+  const conif = new Uint8Array(W * H);
   let millesime = "";
 
   const taches: (() => Promise<void>)[] = [];
-  let refus = 0;
+  let refus = 0, faites = 0;
   for (let ty = y0; ty <= y1; ty++)
     for (let tx = x0; tx <= x1; tx++)
       taches.push(async () => {
         const [mnh, cos] = await Promise.all([hauteurSursolTuile(z, tx, ty).catch(() => null), classesCosiaTuile(z, tx, ty).catch(() => null)]);
         if (!mnh || !cos) refus++;
+        progression?.(++faites, taches.length);
         if (cos && !millesime) millesime = cos.millesime;
         const ox = (tx - x0) * TAILLE_TUILE, oy = (ty - y0) * TAILLE_TUILE;
         for (let j = 0; j < TAILLE_TUILE; j++)
@@ -101,7 +138,10 @@ export async function analyserCanopee(lat: number, lon: number, rayonM: number):
               const v = mnh[kk];
               if (Number.isFinite(v) && v > -50 && v < 80) h[g] = Math.max(0, v);
             }
-            if (cos && cos.classes[kk] !== 255) veg[g] = VEGETAL.has(cos.classes[kk]) ? 1 : 0;
+            if (cos && cos.classes[kk] !== 255) {
+              veg[g] = VEGETAL.has(cos.classes[kk]) ? 1 : 0;
+              conif[g] = cos.classes[kk] === CONIFERE ? 1 : 0;
+            }
           }
       });
   let suivant = 0;
@@ -165,6 +205,7 @@ export async function analyserCanopee(lat: number, lon: number, rayonM: number):
       hs[g] = s / n;
     }
   const sommets: number[] = [];
+  if (pixelM <= PIXEL_MAX_ARBRES)
   for (let j = 1; j < H - 1; j++)
     for (let i = 1; i < W - 1; i++) {
       const g = j * W + i;
@@ -224,8 +265,37 @@ export async function analyserCanopee(lat: number, lon: number, rayonM: number):
   const arbres: ArbreLidar[] = sommets.map((g, s) => {
     const i = g % W, j = (g - i) / W;
     const [lo, la] = depuisMerc(gx0 + (i + 0.5) * pxMerc, gy0 - (j + 0.5) * pxMerc);
-    return { lat: la, lon: lo, hauteur: Math.round(hs[g] * 10) / 10, couronne: Math.round(Math.max(1.5, 2 * Math.sqrt((aire[s] * aPx) / Math.PI)) * 10) / 10 };
+    // Conifère si la majorité des pixels autour du sommet le sont (rayon 1,5 m).
+    let nc = 0, nt = 0;
+    const rr = Math.max(1, Math.round(1.5 / pixelM));
+    for (let dj = -rr; dj <= rr; dj++)
+      for (let di = -rr; di <= rr; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= W || jj >= H || !can[jj * W + ii]) continue;
+        nt++;
+        nc += conif[jj * W + ii];
+      }
+    return {
+      lat: la,
+      lon: lo,
+      hauteur: Math.round(hs[g] * 10) / 10,
+      couronne: Math.round(Math.max(1.5, 2 * Math.sqrt((aire[s] * aPx) / Math.PI)) * 10) / 10,
+      resineux: nt > 0 && nc / nt > 0.5,
+      mesure: true as const,
+    };
   });
+
+  // Surface de la canopée (≈ 1 m) : maximum des hauteurs de canopée par bloc, dans le cercle.
+  const f = Math.max(1, Math.round(1 / pixelM));
+  const sw = Math.ceil(W / f), sh = Math.ceil(H / f);
+  const surf = new Float32Array(sw * sh);
+  for (let j = 0; j < H; j++)
+    for (let i = 0; i < W; i++) {
+      const g = j * W + i;
+      if (!can[g] || !dansCercle(i, j)) continue;
+      const k2 = Math.floor(j / f) * sw + Math.floor(i / f);
+      if (h[g] > surf[k2]) surf[k2] = h[g];
+    }
 
   // Image de la canopée dans le cercle, teinte par classe de hauteur.
   const rgba = new Uint8ClampedArray(W * H * 4);
@@ -253,8 +323,19 @@ export async function analyserCanopee(lat: number, lon: number, rayonM: number):
     volumeM3: Math.round(sommeH * aPx),
     arbres,
     densiteHa: 0,
+    arbresDetectes: pixelM <= PIXEL_MAX_ARBRES,
     millesimeCosia: millesime,
     image: { largeur: W, hauteur: H, rgba, emprise: [ouest, sud, est, nord] },
+    surface: {
+      largeur: sw,
+      hauteur: sh,
+      h: surf,
+      ouest,
+      nord,
+      pasLon: (((f * pxMerc) / C) * 180),
+      pasLat: (nord - sud) / (H / f),
+      pasM: f * pixelM,
+    },
   };
   res.densiteHa = densite(res);
   return res;

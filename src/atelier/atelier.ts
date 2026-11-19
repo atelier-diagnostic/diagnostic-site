@@ -36,7 +36,8 @@ import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIg
 import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
-import { calculerProfil, dessinerProfil, penteEn, profilCsv, distanceM, COULEURS_ECRAN, COULEURS_EXPORT, EXAGERATIONS_COUPE, type Profil, type ExagCoupe } from "./coupe";
+import { creerCoucheCoupe3D } from "./coupe3d";
+import { calculerProfil, dessinerProfil, vuAuDela, penteEn, profilCsv, distanceM, COULEURS_ECRAN, COULEURS_EXPORT, EXAGERATIONS_COUPE, type Profil, type ExagCoupe } from "./coupe";
 import { FOCALES, FOCALE_DEFAUT, champVertical, lireVues, ecrireVues, vuesDeDepart, exporterVues, lireExport, type Vue } from "./vues";
 import { brancherMiseEnPage, type ElementLegende } from "./mise-en-page";
 
@@ -336,7 +337,13 @@ export function createAtelier(root: HTMLElement): Atelier {
           <div class="segmented seg-sm" role="group" aria-label="Exagération verticale">
             ${EXAGERATIONS_COUPE.map((v) => `<button type="button" data-coupe-exag="${v}" aria-pressed="${v === "auto"}">${v === "auto" ? "Auto" : `×${v}`}</button>`).join("")}
           </div>
-          <label class="at-chip"><input type="checkbox" data-coupe-bati checked> Bâti</label>
+          <label class="at-chip"><input type="checkbox" data-coupe-bati checked> Bâti coupé</label>
+          <label class="at-chip" title="Sursol mesuré par le LiDAR HD (MNS) : arbres, haies, végétation haute… le long du trait"><input type="checkbox" data-coupe-sursol checked> Végétation LiDAR</label>
+          <div class="segmented seg-sm" role="group" aria-label="Vue au-delà du plan de coupe" title="Bâti et arbres vus au-delà du plan de coupe, en élévation">
+            <span class="seg-titre">Au-delà</span>
+            ${[0, 15, 30, 60].map((v) => `<button type="button" data-coupe-prof="${v}" aria-pressed="${v === 30}">${v ? `${v} m` : "—"}</button>`).join("")}
+          </div>
+          <button type="button" class="at-lien" data-coupe-inverser title="Inverser A et B : regarder de l'autre côté du plan de coupe">⇄ <span class="at-coupe-regard"></span></button>
           <span class="at-coupe-actions">
             <button type="button" class="at-lien" data-coupe-export="svg" title="Profil en SVG (vectoriel, pour la mise en page)">SVG</button>
             <button type="button" class="at-lien" data-coupe-export="csv" title="Distances et altitudes (tableur)">CSV</button>
@@ -345,6 +352,7 @@ export function createAtelier(root: HTMLElement): Atelier {
             <button type="button" class="icon-btn" data-coupe-fermer aria-label="Fermer la coupe">×</button>
           </span>
         </div>
+        <div class="at-coupe-poignee" title="Glisser pour agrandir le profil" aria-hidden="true"></div>
         <div class="at-coupe-chiffres"></div>
         <div class="at-coupe-profil"><div class="at-coupe-bulle" hidden></div></div>
         <p class="at-note at-coupe-source"></p>
@@ -624,12 +632,15 @@ export function createAtelier(root: HTMLElement): Atelier {
   const coucheArbres = creerCoucheArbres3D("arbres-3d");
   const coucheCourse = creerCoucheCourseSoleil("course-3d");
   coucheCourse.setPlan(true); // l'atelier s'ouvre en 2D
+  const coucheCoupe3D = creerCoucheCoupe3D("coupe-3d");
   const pret = new Promise<void>((r) =>
     map.once("load", () => {
       map.addLayer(coucheArbres, "carroyage");
       map.setLayoutProperty("arbres-3d", "visibility", "none");
       map.addLayer(coucheCourse, "carroyage");
       map.setLayoutProperty("course-3d", "visibility", "none");
+      map.addLayer(coucheCoupe3D, "carroyage");
+      map.setLayoutProperty("coupe-3d", "visibility", "none");
       r();
     }),
   );
@@ -648,10 +659,11 @@ export function createAtelier(root: HTMLElement): Atelier {
     perte.hidden = false;
   });
   map.on("webglcontextrestored", () => {
-    for (const [id, c] of [["arbres-3d", coucheArbres], ["course-3d", coucheCourse]] as const) {
+    for (const [id, c] of [["arbres-3d", coucheArbres], ["course-3d", coucheCourse], ["coupe-3d", coucheCoupe3D]] as const) {
       if (map.getLayer(id)) map.removeLayer(id);
       map.addLayer(c, map.getLayer("carroyage") ? "carroyage" : undefined);
     }
+    majCoupe3D(true);
     appliquer("arbres");
     appliquer("course");
     perte.hidden = true;
@@ -861,8 +873,11 @@ export function createAtelier(root: HTMLElement): Atelier {
       const { source, couches } = await chargerStylePlanIgn();
       await pret;
       if (!map.getSource("plan_ign")) map.addSource("plan_ign", source as maplibregl.SourceSpecification);
-      // Sous l'ombrage du relief et toutes nos couches, au-dessus des fonds raster.
-      for (const c of couches) if (!map.getLayer(c.layer.id)) map.addLayer(c.layer as unknown as maplibregl.LayerSpecification, "relief");
+      // Sous l'ombrage du relief et toutes nos couches, au-dessus des fonds raster ;
+      // sauf les noms, toujours lisibles : au-dessus du bâti et des couches
+      // thématiques, juste sous la coupe et le repère du site.
+      for (const c of couches)
+        if (!map.getLayer(c.layer.id)) map.addLayer(c.layer as unknown as maplibregl.LayerSpecification, c.theme === "noms" ? "coupe-halo" : "relief");
       couchesIgn = couches;
       appliquer("fond");
     } catch {
@@ -936,6 +951,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       appliquer("bati");
       appliquer("arbres");
       majTerrain();
+      majCoupe3D(true);
     }),
   );
 
@@ -1258,6 +1274,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   }
   map.on("idle", () => {
     if (map.getTerrain()) poserSurSol();
+    majCoupe3D();
   });
   root.querySelectorAll<HTMLButtonElement>("[data-exag]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -1334,6 +1351,14 @@ export function createAtelier(root: HTMLElement): Atelier {
   let dessin: ReturnType<typeof dessinerProfil> | null = null;
   let exagCoupe: ExagCoupe = "auto";
   let batiCoupe = true;
+  let sursolCoupe = true;
+  let profondeurCoupe = 30;
+  let hauteurProfil = 200;
+  try {
+    hauteurProfil = Math.max(140, Math.min(900, Number(localStorage.getItem("atelier:coupe-hauteur")) || 200));
+  } catch {
+    /* valeur par défaut */
+  }
   let demandeCoupe = 0;
   const marqueur = (lettre: string) => {
     const el = document.createElement("div");
@@ -1382,6 +1407,32 @@ export function createAtelier(root: HTMLElement): Atelier {
     coupeAide.firstChild!.textContent = "Cliquez le point A ";
     map.getCanvas().style.cursor = "crosshair";
   }
+  /** Plan de coupe dressé en 3D, posé sur le terrain affiché (re-posé quand le relief change). */
+  let cleCoupe3D = "";
+  function majCoupe3D(forcer = false): void {
+    const visible = !!profil && mode3d && !coupeEl.hidden;
+    if (map.getLayer("coupe-3d")) map.setLayoutProperty("coupe-3d", "visibility", visible ? "visible" : "none");
+    if (!visible || !profil) {
+      if (cleCoupe3D) coucheCoupe3D.setCoupe(null);
+      cleCoupe3D = "";
+      return;
+    }
+    const p = profil;
+    const n = Math.min(240, p.points.length);
+    const relief = !!map.getTerrain();
+    const pts = Array.from({ length: n }, (_, k) => {
+      const q = p.points[Math.round((k * (p.points.length - 1)) / (n - 1))];
+      return { lon: q.lon, lat: q.lat, d: q.d, sol: relief ? (map.queryTerrainElevation([q.lon, q.lat]) ?? 0) : 0 };
+    });
+    const cle = `${p.a}|${p.b}|${batiCoupe}|${pts.filter((_, k) => k % 30 === 0).map((x) => Math.round(x.sol * 2)).join(",")}`;
+    if (!forcer && cle === cleCoupe3D) return; // évite la boucle « idle » → redessin → « idle »
+    cleCoupe3D = cle;
+    const brut = p.longueur / 8;
+    const puiss = 10 ** Math.floor(Math.log10(brut));
+    const pasR = [1, 2, 2.5, 5, 10].map((m) => m * puiss).find((v) => v >= brut) ?? 10 * puiss;
+    coucheCoupe3D.setCoupe({ points: pts, longueur: p.longueur, batiments: batiCoupe ? p.batiments.map((b) => ({ d0: b.d0, d1: b.d1, h: b.h })) : [], pas: pasR });
+  }
+
   function fermerCoupe(): void {
     trace = "aucun";
     ptA = ptB = null;
@@ -1390,6 +1441,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     mkA.remove();
     mkB.remove();
     coupeEl.hidden = true;
+    majCoupe3D();
     coupeAide.hidden = true;
     coupeBtn.setAttribute("aria-pressed", "false");
     map.getCanvas().style.cursor = "";
@@ -1442,11 +1494,13 @@ export function createAtelier(root: HTMLElement): Atelier {
     try {
       // Bâtiments : ceux du périmètre, chargés au besoin.
       if (!dernierBati && site) void chargerCouche("bati");
+      if (!derniersArbres && site) void chargerCouche("arbres");
       const p = await calculerProfil(ptA, ptB, sourceAlt, dernierBati);
       if (n !== demandeCoupe) return;
       profil = p;
       afficherCoupe();
       majCarteCoupe();
+      majCoupe3D(true);
     } catch (e) {
       if (n !== demandeCoupe) return;
       q<HTMLElement>(".at-coupe-chiffres").innerHTML = `<span class="at-note">${esc(e instanceof Error && e.message === "Coupe trop courte" ? "Coupe trop courte." : "Altitudes indisponibles (service de l'IGN). Déplacez un point pour réessayer.")}</span>`;
@@ -1481,17 +1535,57 @@ export function createAtelier(root: HTMLElement): Atelier {
           ? `${nb} bâtiment${nb > 1 ? "s" : ""} coupé${nb > 1 ? "s" : ""} (BD TOPO®, hauteur depuis le point bas du terrain ; pointillés : hauteur supposée). Bâti chargé dans le périmètre d'analyse seulement.`
           : "Bâti : activez la couche Bâtiments (périmètre d'analyse)."
         : "") +
+      (sursolCoupe && p.source === "lidar"
+        ? p.sursol
+          ? " Vert : sursol LiDAR HD (MNS) de plus de 2 m hors bâti coupé, surtout la végétation haute."
+          : " Sursol LiDAR pas encore publié ici."
+        : "") +
+      (profondeurCoupe
+        ? ` Au-delà du plan (${profondeurCoupe} m, estompés avec la distance) : bâti BD TOPO® du périmètre${derniersArbres ? ", arbres OpenStreetMap (pointillés : taille supposée)" : ""}.`
+        : "") +
       (p.manquantes ? ` ${p.manquantes} tuile(s) d'altitudes refusée(s) : profil incomplet.` : "");
+    // Sens du regard : à gauche de A → B.
+    const cosA = Math.cos((p.a[1] * Math.PI) / 180);
+    const az = (Math.atan2((p.b[0] - p.a[0]) * cosA, p.b[1] - p.a[1]) * 180) / Math.PI;
+    const regard = (((az - 90) % 360) + 360) % 360;
+    const DIRS = ["le nord", "le nord-est", "l'est", "le sud-est", "le sud", "le sud-ouest", "l'ouest", "le nord-ouest"];
+    q<HTMLElement>(".at-coupe-regard").textContent = `Regard vers ${DIRS[Math.round(regard / 45) % 8]}`;
     redessinerProfil();
   }
   function redessinerProfil(): void {
     if (!profil) return;
-    const W = Math.max(320, coupeProfil.clientWidth), H = 190;
-    dessin = dessinerProfil(profil, W, H, exagCoupe, batiCoupe, COULEURS_ECRAN);
+    const W = Math.max(320, coupeProfil.clientWidth), H = hauteurProfil;
+    dessin = dessinerProfil(profil, W, H, optionsDessin(), COULEURS_ECRAN);
     coupeProfil.querySelector("svg")?.remove();
     coupeProfil.insertAdjacentHTML("afterbegin", dessin.svg);
   }
+  function optionsDessin() {
+    const arriere = profil && (profondeurCoupe || derniersArbres) ? vuAuDela(profil, profondeurCoupe, dernierBati, derniersArbres?.arbres) : null;
+    return { exag: exagCoupe, bati: batiCoupe, sursol: sursolCoupe, arriere };
+  }
   new ResizeObserver(() => redessinerProfil()).observe(coupeProfil);
+  // Hauteur du profil : poignée en haut du panneau (retenue).
+  coupeProfil.style.height = `${hauteurProfil}px`;
+  q<HTMLElement>(".at-coupe-poignee").addEventListener("pointerdown", (ev) => {
+    const poignee = ev.currentTarget as HTMLElement;
+    poignee.setPointerCapture(ev.pointerId);
+    const y0 = ev.clientY, h0 = hauteurProfil;
+    const max = Math.max(200, (canvasEl.parentElement?.clientHeight ?? 800) * 0.75 - 140);
+    const bouger = (e: PointerEvent) => {
+      hauteurProfil = Math.round(Math.max(140, Math.min(max, h0 + (y0 - e.clientY))));
+      coupeProfil.style.height = `${hauteurProfil}px`;
+    };
+    const finir = () => {
+      poignee.removeEventListener("pointermove", bouger);
+      try {
+        localStorage.setItem("atelier:coupe-hauteur", String(hauteurProfil));
+      } catch {
+        /* rien */
+      }
+    };
+    poignee.addEventListener("pointermove", bouger);
+    poignee.addEventListener("pointerup", finir, { once: true });
+  });
   coupeProfil.addEventListener("mousemove", (ev) => {
     if (!profil || !dessin) return;
     const r = coupeProfil.getBoundingClientRect();
@@ -1526,8 +1620,27 @@ export function createAtelier(root: HTMLElement): Atelier {
       redessinerProfil();
     }),
   );
+  q<HTMLInputElement>("[data-coupe-sursol]").addEventListener("change", (ev) => {
+    sursolCoupe = (ev.target as HTMLInputElement).checked;
+    afficherCoupe();
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-coupe-prof]").forEach((b) =>
+    b.addEventListener("click", () => {
+      profondeurCoupe = Number(b.dataset.coupeProf);
+      root.querySelectorAll("[data-coupe-prof]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      afficherCoupe();
+    }),
+  );
+  q<HTMLButtonElement>("[data-coupe-inverser]").addEventListener("click", () => {
+    if (!ptA || !ptB) return;
+    [ptA, ptB] = [ptB, ptA];
+    mkA.setLngLat(ptA);
+    mkB.setLngLat(ptB);
+    void tracerCoupe();
+  });
   q<HTMLInputElement>("[data-coupe-bati]").addEventListener("change", (ev) => {
     batiCoupe = (ev.target as HTMLInputElement).checked;
+    majCoupe3D(true);
     afficherCoupe();
   });
   const telecharger = (blob: Blob, nom: string) => {
@@ -1542,7 +1655,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (!profil) return;
       const nom = `coupe-${today()}`;
       if (b.dataset.coupeExport === "csv") telecharger(new Blob(["﻿" + profilCsv(profil)], { type: "text/csv" }), `${nom}.csv`);
-      else telecharger(new Blob([dessinerProfil(profil, 1200, 380, exagCoupe, batiCoupe, COULEURS_EXPORT).svg], { type: "image/svg+xml" }), `${nom}.svg`);
+      else telecharger(new Blob([dessinerProfil(profil, 1400, Math.round(1400 * (hauteurProfil / Math.max(320, coupeProfil.clientWidth))), optionsDessin(), COULEURS_EXPORT).svg], { type: "image/svg+xml" }), `${nom}.svg`);
     }),
   );
 
@@ -1887,6 +2000,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         });
         coucheArbres.setArbres(arbres, ctx.lat, ctx.lon);
         derniersArbres = { arbres, lat0: ctx.lat, lon0: ctx.lon };
+        if (profil) afficherCoupe();
         demanderOmbres();
         etatCouche(id, arbres.length ? `${arbres.length} arbres recensés dans le périmètre.` : "Aucun arbre recensé dans OpenStreetMap ici (inventaire souvent incomplet).");
       } else if (id === "vegetation") {

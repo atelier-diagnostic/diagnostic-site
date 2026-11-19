@@ -80,8 +80,8 @@ const DEPARTS: Depart[] = [
   },
   {
     nom: "Nature en ville",
-    actives: { fond: 0.7, cosia: 0.7, arbres: 0.9, bati: 0.5, protegees: 0.5 },
-    reglages: { fond: "compose", colo: "neutre", rendu: "volume", mode: "2d" },
+    actives: { fond: 0.7, canopee: 0.8, arbres: 0.9, bati: 0.5, protegees: 0.5 },
+    reglages: { fond: "compose", colo: "neutre", rendu: "volume", "arbres-src": "lidar", mode: "2d" },
     coches: { ...COMPOSE, "theme-ign:vegetation": false, "photo-dessous": false },
   },
 ];

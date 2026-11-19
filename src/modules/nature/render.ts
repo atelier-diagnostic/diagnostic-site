@@ -3,6 +3,7 @@
 // zonages de protection.
 import type { NatureResult } from "./compute";
 import { COEF_CBS, CLASSES_COSIA } from "../../core/cosia";
+import { CLASSES_HAUTEUR } from "../../core/canopee-lidar";
 
 function indicator(label: string, value: string, sous = ""): string {
   return `<div class="indicator">${sous ? `<span class="ind-sous">${sous}</span>` : ""}<span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
@@ -46,9 +47,33 @@ function blocSol(r: NatureResult): string {
     Les toitures et murs végétalisés ne sont pas détectés ; le CBS réglementaire du PLU se calcule à la parcelle, sur plan.</p>`;
 }
 
+function blocCanopee(r: NatureResult): string {
+  const l = r.lidar;
+  if (!l)
+    return `<p class="module-note">Canopée LiDAR non mesurée : le LiDAR HD de l'IGN n'est pas encore publié sur ce secteur, ou le service n'a pas répondu.</p>`;
+  const barre = CLASSES_HAUTEUR.map((c, k) => `<span style="width:${l.partsHauteur[k]}%;background:${c.couleur}" title="${c.titre} : ${fr(l.partsHauteur[k])} %"></span>`).join("");
+  const legende = CLASSES_HAUTEUR.map((c, k) => `<li><i style="background:${c.couleur}"></i>${c.titre} <b>${fr(l.partsHauteur[k])} %</b></li>`).join("");
+  return `
+    <div class="indicators">
+      ${indicator("Indice de canopée", `${fr(l.canopeePct)} %`, "végétation ≥ 3 m, mesurée")}
+      ${indicator("Arbres détectés", `${l.nbArbres}`, `${fr(l.densiteHa)} / ha`)}
+      ${indicator("Hauteur moyenne", `${fr(l.hMoy)} m`, `90 % sous ${fr(l.hP90)} m`)}
+      ${indicator("Plus grand arbre", `${fr(l.hMax)} m`)}
+      ${indicator("Volume de houppiers", `${fr(l.volumeM3 / 1000, 0)} k m³`, "approché")}
+    </div>
+    <div class="sol-barre" role="img" aria-label="Canopée par classe de hauteur">${barre}</div>
+    <ul class="sol-legende">${legende}</ul>
+    <p class="module-note">Mesure : hauteur du sursol LiDAR HD de l'IGN (laser aéroporté, pixels de ${fr(l.pixelM)} m), retenue là où CoSIA ${l.millesimeCosia}
+    voit des feuillus, des conifères ou des broussailles : toits, murs et véhicules sont écartés. Canopée = végétation d'au moins 3 m,
+    rapportée au cercle de ${l.rayonM} m${l.couverturePct < 95 ? ` (données sur ${fr(l.couverturePct)} % du cercle)` : ""}.
+    Arbres : sommets de la canopée (fenêtre variable selon la hauteur, Popescu et Wynne 2004) ; les bosquets serrés sont sous-comptés
+    (houppiers jointifs), l'indice de canopée n'en dépend pas. Le millésime du LiDAR (2021 à 2025 selon les régions) et celui de CoSIA
+    peuvent différer : un arbre abattu ou planté entre-temps peut fausser quelques pixels.</p>`;
+}
+
 function bloc33030(r: NatureResult): string {
   const ok = (b: boolean) => `<span class="pastille ${b ? "ok" : "ko"}">${b ? "atteint" : "non atteint"}</span>`;
-  const can = r.sol ? r.sol.canopeePct : null;
+  const can = r.sourceCanopee === "LiDAR HD" ? r.canopyPct : r.sol ? r.sol.canopeePct : null;
   const ev = r.espaceVert300;
   const l300 =
     ev === null
@@ -59,7 +84,7 @@ function bloc33030(r: NatureResult): string {
   return `
     <ul class="regle-33">
       <li><b>3</b> arbres visibles depuis chaque logement : <span class="pastille nd">non évaluable</span> (dépend des vues depuis chaque fenêtre).</li>
-      <li><b>30 %</b> de canopée dans le quartier : ${can === null ? `<span class="pastille nd">non évalué</span>` : `${ok(can >= 30)} ${fr(can)} % dans le cercle de ${r.effectiveRadiusM} m.`}</li>
+      <li><b>30 %</b> de canopée dans le quartier : ${can === null ? `<span class="pastille nd">non évalué</span>` : `${ok(can >= 30)} ${fr(can)} % dans le cercle de ${r.effectiveRadiusM} m (${r.sourceCanopee === "LiDAR HD" ? "LiDAR HD, végétation ≥ 3 m" : "CoSIA, vue d'avion"}).`}</li>
       <li><b>300 m</b> au plus d'un espace vert d'au moins 1 ha : ${l300}</li>
     </ul>
     <p class="module-note">Règle proposée par C. Konijnendijk (2021), reprise par de nombreuses villes. Espaces verts : parcs,
@@ -86,9 +111,11 @@ export function renderNature(el: HTMLElement, r: NatureResult): void {
   el.innerHTML = `
     <h3 class="module-subtitle">Couverture du sol</h3>
     ${blocSol(r)}
+    <h3 class="module-subtitle">Canopée mesurée (LiDAR HD)</h3>
+    ${blocCanopee(r)}
     <h3 class="module-subtitle">Règle 3-30-300</h3>
     ${bloc33030(r)}
-    <h3 class="module-subtitle">Arbres</h3>
+    <h3 class="module-subtitle">Arbres recensés (OpenStreetMap)</h3>
     ${osm}
     <h3 class="module-subtitle">Zonages de protection réglementaires</h3>
     ${protectionBlock}

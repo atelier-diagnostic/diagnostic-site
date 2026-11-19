@@ -12,7 +12,7 @@ import { fetchJson } from "../api/client";
 import { fetchBuildingsWithHeight, BUILDING_SOURCE_LABEL, type BuildingsResult } from "../core/buildings";
 import { bboxAroundMeters } from "../core/geo";
 import type { SiteContext } from "../core/types";
-import { fetchTrees } from "../modules/soleil/fetch";
+import { fetchTrees, type ArbreOsm } from "../modules/soleil/fetch";
 import { creerCoucheCourseSoleil } from "./course-soleil";
 import type { CarteEnsoleillement, PasSoleil } from "../map3d/ensoleillement";
 import { DEFAULT_HEIGHT_M, MAX_SHADOW_M, type ShadowBuilding } from "../map3d/shadows";
@@ -37,6 +37,7 @@ import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
 import { creerCoucheCoupe3D } from "./coupe3d";
+import { analyserCanopee, CLASSES_HAUTEUR, type CanopeeLidar } from "../core/canopee-lidar";
 import { calculerProfil, dessinerProfil, vuAuDela, penteEn, profilCsv, distanceM, COULEURS_ECRAN, COULEURS_EXPORT, EXAGERATIONS_COUPE, type Profil, type ExagCoupe } from "./coupe";
 import { FOCALES, FOCALE_DEFAUT, champVertical, lireVues, ecrireVues, vuesDeDepart, exporterVues, lireExport, type Vue } from "./vues";
 import { brancherMiseEnPage, type ElementLegende } from "./mise-en-page";
@@ -165,6 +166,14 @@ export function createAtelier(root: HTMLElement): Atelier {
   let numerosCadastre = false;
   /** Altitudes des courbes et des coupes : LiDAR HD (complété par le RGE ALTI) ou RGE ALTI seul. */
   let sourceAlt: SourceAlt = "lidar";
+  /** Source des arbres : détectés dans le LiDAR HD, ou saisis dans OpenStreetMap. */
+  let sourceArbres: "lidar" | "osm" = "lidar";
+  /** Analyse LiDAR de la canopée, une par site (partagée par la canopée et les arbres). */
+  let canopee: { ctx: SiteContext; p: Promise<CanopeeLidar> } | null = null;
+  const canopeePour = (ctx: SiteContext) => {
+    if (canopee?.ctx !== ctx) canopee = { ctx, p: analyserCanopee(ctx.lat, ctx.lon, ctx.radiusM ?? 150) };
+    return canopee.p;
+  };
   /** Bâtiments chargés (pour les coupes). */
   let dernierBati: GeoJSON.FeatureCollection | null = null;
   /** Fond composé posé sur la photo aérienne (le fond opaque IGN s'efface). */
@@ -204,7 +213,11 @@ export function createAtelier(root: HTMLElement): Atelier {
               ${(Object.keys(COSIA) as MillesimeCosia[]).map((m) => `<button type="button" data-cosia="${m}" aria-pressed="${m === millesime}">${m}</button>`).join("")}
             </div>`
         : c.id === "arbres"
-          ? `<div class="segmented seg-sm" role="group" aria-label="Rendu des arbres">
+          ? `<div class="segmented seg-sm" role="group" aria-label="Source des arbres">
+              <button type="button" data-arbres-src="lidar" aria-pressed="true">LiDAR HD</button>
+              <button type="button" data-arbres-src="osm" aria-pressed="false">OpenStreetMap</button>
+            </div>
+            <div class="segmented seg-sm" role="group" aria-label="Rendu des arbres">
               <button type="button" data-rendu="volume" aria-pressed="true">Volume</button>
               <button type="button" data-rendu="point" aria-pressed="false">Point</button>
             </div>`
@@ -826,6 +839,15 @@ export function createAtelier(root: HTMLElement): Atelier {
       (map.getSource("cosia") as maplibregl.RasterTileSource).setTiles([tuilesCosia(millesime)]);
     }),
   );
+  root.querySelectorAll<HTMLButtonElement>("[data-arbres-src]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      sourceArbres = b.dataset.arbresSrc as typeof sourceArbres;
+      root.querySelectorAll("[data-arbres-src]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      await pret;
+      charge.delete("arbres");
+      if (etat.get("arbres")!.actif) void chargerCouche("arbres");
+    }),
+  );
   root.querySelectorAll<HTMLButtonElement>("[data-rendu]").forEach((b) =>
     b.addEventListener("click", async () => {
       rendu = b.dataset.rendu as typeof rendu;
@@ -981,7 +1003,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   // --- Vues enregistrées ---------------------------------------------------------------
   // L'état est lu sur les commandes du panneau et rejoué en les actionnant : une vue
   // passe par les mêmes chemins qu'un clic, sans logique en double.
-  const GROUPES = ["fond", "colo", "exag", "courbes", "alt", "pas", "cosia", "rendu", "numeros", "mode"] as const;
+  const GROUPES = ["fond", "colo", "exag", "courbes", "alt", "arbres-src", "pas", "cosia", "rendu", "numeros", "mode"] as const;
   const vuesEl = q<HTMLElement>(".at-vues");
   const listeVues = q<HTMLElement>(".at-vues-liste");
   const formVue = q<HTMLFormElement>(".at-vues-form");
@@ -1991,8 +2013,23 @@ export function createAtelier(root: HTMLElement): Atelier {
         await chargerCouche("bati");
         demanderOmbres();
       } else if (id === "arbres") {
-        etatCouche(id, "Chargement…");
-        const arbres = await fetchTrees(ctx, r);
+        etatCouche(id, sourceArbres === "lidar" ? "Détection des arbres dans le LiDAR HD…" : "Chargement…");
+        let arbres: ArbreOsm[];
+        let texte: string;
+        const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+        if (sourceArbres === "lidar") {
+          try {
+            const c = await canopeePour(ctx);
+            arbres = c.arbres;
+            texte = `${arbres.length} arbres détectés dans le LiDAR HD (${fr(c.densiteHa)} / ha), hauteur et houppier mesurés.` + (c.couverturePct < 95 ? ` LiDAR ou CoSIA sur ${fr(c.couverturePct)} % du cercle seulement.` : "");
+          } catch {
+            arbres = await fetchTrees(ctx, r);
+            texte = `LiDAR HD pas encore publié ici ou indisponible : ${arbres.length} arbres OpenStreetMap.`;
+          }
+        } else {
+          arbres = await fetchTrees(ctx, r);
+          texte = arbres.length ? `${arbres.length} arbres recensés dans OpenStreetMap.` : "Aucun arbre recensé dans OpenStreetMap ici (inventaire souvent incomplet).";
+        }
         if (site !== ctx) return;
         (map.getSource("arbres") as maplibregl.GeoJSONSource).setData({
           type: "FeatureCollection",
@@ -2002,7 +2039,32 @@ export function createAtelier(root: HTMLElement): Atelier {
         derniersArbres = { arbres, lat0: ctx.lat, lon0: ctx.lon };
         if (profil) afficherCoupe();
         demanderOmbres();
-        etatCouche(id, arbres.length ? `${arbres.length} arbres recensés dans le périmètre.` : "Aucun arbre recensé dans OpenStreetMap ici (inventaire souvent incomplet).");
+        etatCouche(id, texte);
+      } else if (id === "canopee") {
+        etatCouche(id, "Lecture du LiDAR HD et de CoSIA…");
+        const c = await canopeePour(ctx);
+        if (site !== ctx) return;
+        const toile = document.createElement("canvas");
+        toile.width = c.image.largeur;
+        toile.height = c.image.hauteur;
+        toile.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(c.image.rgba), c.image.largeur, c.image.hauteur), 0, 0);
+        const [o, su, e, n] = c.image.emprise;
+        const coords: [[number, number], [number, number], [number, number], [number, number]] = [[o, n], [e, n], [e, su], [o, su]];
+        const url = toile.toDataURL("image/png");
+        const src = map.getSource("canopee") as maplibregl.ImageSource | undefined;
+        if (src) src.updateImage({ url, coordinates: coords });
+        else {
+          map.addSource("canopee", { type: "image", url, coordinates: coords });
+          map.addLayer({ id: "canopee", type: "raster", source: "canopee", paint: { "raster-opacity": etat.get("canopee")!.opacite, "raster-resampling": "nearest" } }, "arbres");
+        }
+        appliquer("canopee");
+        const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+        etatCouche(
+          id,
+          `Canopée ${fr(c.canopeePct)} % du cercle de ${c.rayonM} m · hauteur moyenne ${fr(c.hMoy)} m, 90 % sous ${fr(c.hP90)} m · ` +
+            `${c.arbres.length} arbres détectés. LiDAR HD × CoSIA ${c.millesimeCosia}, pixels de ${fr(c.pixelM)} m` +
+            (c.couverturePct < 95 ? ` ; données sur ${fr(c.couverturePct)} % du cercle.` : "."),
+        );
       } else if (id === "vegetation") {
         etatCouche(id, "Chargement…");
         const fc = await fetchVegetation(ctx, r);
@@ -2010,9 +2072,15 @@ export function createAtelier(root: HTMLElement): Atelier {
         (map.getSource("vegetation") as maplibregl.GeoJSONSource).setData(fc);
         etatCouche(id, fc.features?.length ? "" : "Aucune zone de végétation BD TOPO dans le périmètre.");
       }
-    } catch {
+    } catch (err) {
       charge.delete(id);
-      etatCouche(id, "Source indisponible pour le moment — ce n'est pas une absence de donnée.");
+      if (id === "canopee") canopee = null; // nouvel essai à la réactivation
+      etatCouche(
+        id,
+        id === "canopee" && err instanceof Error && /pas encore publié/.test(err.message)
+          ? "LiDAR HD pas encore publié sur ce secteur (ou CoSIA absent) : canopée non mesurable ici."
+          : "Source indisponible pour le moment — ce n'est pas une absence de donnée.",
+      );
     }
   }
 
@@ -2059,7 +2127,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     // Les données vectorielles dépendent du point et du rayon : on recharge.
     charge.clear();
     batimentsEnvoyes = false;
-    for (const id of ["bati", "arbres", "vegetation", "ombres"]) if (etat.get(id)!.actif) void chargerCouche(id);
+    for (const id of ["bati", "arbres", "vegetation", "ombres", "canopee"]) if (etat.get(id)!.actif) void chargerCouche(id);
     if (etat.get("ensoleillement")!.actif) void chargerCouche("bati");
     if (etat.get("courbes")!.actif) void dessinerCourbes();
     if (etat.get("isochrones")!.actif) void dessinerIsochrones();
@@ -2101,8 +2169,9 @@ export function createAtelier(root: HTMLElement): Atelier {
           else it.pastilles = [{ couleur: NEUTRE, libelle: "bâtiment" }];
           it.titre = coloration === "hauteur" ? "Bâtiments par hauteur" : coloration === "usage" ? "Bâtiments par usage" : "Bâtiments";
         }
-        if (c.id === "arbres") it.pastilles = [{ couleur: rendu === "volume" ? "#3a7a30" : "#3f8f3a", libelle: "arbre recensé" }];
+        if (c.id === "arbres") it.pastilles = [{ couleur: rendu === "volume" ? "#3a7a30" : "#3f8f3a", libelle: sourceArbres === "lidar" ? "arbre détecté (LiDAR HD)" : "arbre recensé (OSM)" }];
         if (c.id === "vegetation") it.pastilles = [{ couleur: "#5f9e4b", libelle: "zone de végétation" }];
+        if (c.id === "canopee") it.pastilles = CLASSES_HAUTEUR.map((h) => ({ couleur: h.couleur, libelle: `végétation ${h.titre}` }));
         if (c.id === "ombres") it.pastilles = [{ couleur: "#1f2a44", libelle: `ombres, ${dateInput.value} ${hourInput.value.replace(".25", "h15").replace(".5", "h30").replace(".75", "h45")} h` }];
         if (c.id === "perimetre") it.pastilles = [{ couleur: "#3a3a3c", libelle: "périmètre d'analyse" }];
         if (c.id === "cosia") it.titre = `CoSIA ${millesime}`;

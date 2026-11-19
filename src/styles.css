@@ -894,9 +894,9 @@ body[data-vue="atelier"] { overflow: hidden; }
 .at-vues:not(.repliee) .at-vues-active { display: none; }
 
 /* --- Coupe de terrain ---------------------------------------------------- */
-:root { --coupe-terre: #e8dfcf; --coupe-trait: #6b4a2c; --coupe-bati: #d4d0c8; --coupe-bati-trait: #8a8478; }
-:root[data-theme="dark"] { --coupe-terre: #4a4135; --coupe-trait: #d6b48c; --coupe-bati: #5a5852; --coupe-bati-trait: #9a968c; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --coupe-terre: #4a4135; --coupe-trait: #d6b48c; --coupe-bati: #5a5852; --coupe-bati-trait: #9a968c; } }
+:root { --coupe-terre: #e8dfcf; --coupe-trait: #6b4a2c; --coupe-bati: #d4d0c8; --coupe-bati-trait: #8a8478; --coupe-vu: #f1efeb; --coupe-vu-trait: #b5b0a6; --coupe-vegetal: #cfe0c3; --coupe-vegetal-trait: #5f8a4a; }
+:root[data-theme="dark"] { --coupe-terre: #4a4135; --coupe-trait: #d6b48c; --coupe-bati: #5a5852; --coupe-bati-trait: #9a968c; --coupe-vu: #3a3a3c; --coupe-vu-trait: #6e6e73; --coupe-vegetal: #34472b; --coupe-vegetal-trait: #8fbf75; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --coupe-terre: #4a4135; --coupe-trait: #d6b48c; --coupe-bati: #5a5852; --coupe-bati-trait: #9a968c; --coupe-vu: #3a3a3c; --coupe-vu-trait: #6e6e73; --coupe-vegetal: #34472b; --coupe-vegetal-trait: #8fbf75; } }
 .at-coupe-aide {
   position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 2; padding: 6px 12px; border-radius: 999px;
   background: var(--ink); color: var(--panel); font-size: 12.5px; box-shadow: var(--shadow-chip);
@@ -920,8 +920,13 @@ body[data-vue="atelier"] { overflow: hidden; }
 .at-coupe-chiffres div { display: flex; flex-direction: column; }
 .at-coupe-chiffres b { font-size: 14px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .at-coupe-chiffres i { font-style: normal; font-size: 10.5px; }
-.at-coupe-profil { position: relative; height: 190px; }
-.at-coupe-profil svg { display: block; width: 100%; height: 190px; }
+.at-coupe-profil { position: relative; height: 200px; }
+.at-coupe-profil svg { display: block; width: 100%; height: 100%; }
+.at-coupe-poignee { position: absolute; top: 0; left: 50%; width: 64px; height: 12px; margin-left: -32px; cursor: ns-resize; touch-action: none; }
+.at-coupe-poignee::before { content: ""; position: absolute; top: 4px; left: 18px; right: 18px; height: 4px; border-radius: 2px; background: var(--border-strong); }
+.at-coupe-poignee:hover::before { background: var(--ink-2); }
+.seg-titre { align-self: center; padding: 0 6px 0 8px; font-size: 11.5px; color: var(--muted); }
+.at-coupe-regard { font-size: 12px; }
 .at-coupe-profil.survol::after { content: ""; position: absolute; top: 26px; bottom: 24px; left: var(--curseur); width: 1px; background: var(--ink-2); opacity: 0.6; pointer-events: none; }
 .at-coupe-bulle { position: absolute; z-index: 1; padding: 3px 8px; border-radius: 7px; background: var(--ink); color: var(--panel); font-size: 11.5px; white-space: nowrap; pointer-events: none; }
 .at-coupe-bulle[hidden] { display: none; }

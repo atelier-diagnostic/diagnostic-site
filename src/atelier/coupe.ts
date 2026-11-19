@@ -11,7 +11,7 @@
 // descente cumulées (sur un profil lissé à ±1 m, sinon chaque bordure compte),
 // pente moyenne et pente maximale (sur 5 m au moins).
 
-import { altitudesMixtes, TAILLE_TUILE, type SourceAlt } from "./relief-dem";
+import { altitudesMixtes, sursolTuile, TAILLE_TUILE, type SourceAlt } from "./relief-dem";
 
 const C = 20037508.342789244;
 type LL = [number, number];
@@ -19,6 +19,8 @@ type LL = [number, number];
 export interface PointProfil {
   d: number;
   z: number;
+  /** Sursol LiDAR (MNS : dessus des arbres, toits…), NaN si absent. */
+  s: number;
   lon: number;
   lat: number;
 }
@@ -49,6 +51,8 @@ export interface Profil {
   batiments: BatimentCoupe[];
   /** Tuiles d'altitudes refusées (trous dans le profil). */
   manquantes: number;
+  /** Sursol LiDAR lu sur au moins une partie du tracé. */
+  sursol: boolean;
 }
 
 const versMerc = (lon: number, lat: number): LL => [(lon * C) / 180, (Math.log(Math.tan(((90 + lat) * Math.PI) / 360)) * C) / Math.PI];
@@ -132,6 +136,26 @@ export async function calculerProfil(a: LL, b: LL, source: SourceAlt, bati?: Geo
     }),
   );
   if (manquantes === cles.size) throw new Error("Altitudes IGN indisponibles");
+  // Sursol LiDAR (MNS) : facultatif, aux mêmes tuiles ; absent hors couverture.
+  const sursol = new Map<string, Float32Array | null>();
+  if (source === "lidar")
+    await Promise.all(
+      [...cles].map(async (k) => {
+        const [x, y] = k.split(",").map(Number);
+        sursol.set(k, await sursolTuile(z, x, y).catch(() => null));
+      }),
+    );
+  const lire = (m: Map<string, Float32Array | null>, ix: number, iy: number): number => {
+    const tx = Math.floor(ix / TAILLE_TUILE), ty = Math.floor(iy / TAILLE_TUILE);
+    const g = m.get(`${tx},${ty}`);
+    if (!g) return NaN;
+    const v = g[(iy - ty * TAILLE_TUILE) * TAILLE_TUILE + (ix - tx * TAILLE_TUILE)];
+    return Number.isFinite(v) && v > -1000 && v < 9000 ? v : NaN;
+  };
+  const bilin = (f: (ix: number, iy: number) => number, px: number, py: number) => {
+    const ix = Math.floor(px), iy = Math.floor(py), fx = px - ix, fy = py - iy;
+    return (f(ix, iy) * (1 - fx) + f(ix + 1, iy) * fx) * (1 - fy) + (f(ix, iy + 1) * (1 - fx) + f(ix + 1, iy + 1) * fx) * fy;
+  };
   const val = (ix: number, iy: number): number => {
     const tx = Math.floor(ix / TAILLE_TUILE), ty = Math.floor(iy / TAILLE_TUILE);
     const tu = tuiles.get(`${tx},${ty}`);
@@ -140,12 +164,13 @@ export async function calculerProfil(a: LL, b: LL, source: SourceAlt, bati?: Geo
     return Number.isFinite(v) && v > -1000 && v < 9000 ? v : NaN;
   };
   const points: PointProfil[] = [];
+  let avecSursol = false;
   for (let i = 0; i < n; i++) {
     const p = pos[i];
-    const ix = Math.floor(p.px), iy = Math.floor(p.py), fx = p.px - ix, fy = p.py - iy;
-    const v00 = val(ix, iy), v10 = val(ix + 1, iy), v01 = val(ix, iy + 1), v11 = val(ix + 1, iy + 1);
-    const zz = (v00 * (1 - fx) + v10 * fx) * (1 - fy) + (v01 * (1 - fx) + v11 * fx) * fy;
-    points.push({ d: i * pas, z: Number.isFinite(zz) ? zz : NaN, lon: p.lon, lat: p.lat });
+    const zz = bilin(val, p.px, p.py);
+    const ss = source === "lidar" ? bilin((ix, iy) => lire(sursol, ix, iy), p.px, p.py) : NaN;
+    if (Number.isFinite(ss)) avecSursol = true;
+    points.push({ d: i * pas, z: Number.isFinite(zz) ? zz : NaN, s: Number.isFinite(ss) ? ss : NaN, lon: p.lon, lat: p.lat });
   }
   const ok = points.filter((p) => Number.isFinite(p.z));
   if (ok.length < 2) throw new Error("Pas d'altitude sur ce tracé");
@@ -226,7 +251,91 @@ export async function calculerProfil(a: LL, b: LL, source: SourceAlt, bati?: Geo
     penteMax,
     batiments,
     manquantes,
+    sursol: avecSursol,
   };
+}
+
+// --- Ce qui est vu au-delà du plan de coupe ---------------------------------------------
+// On regarde à gauche du sens A → B (A à gauche du dessin, B à droite) : pour
+// regarder de l'autre côté, on inverse A et B.
+
+export interface BatimentVu {
+  d0: number;
+  d1: number;
+  pied: number;
+  h: number;
+  /** Distance au plan de coupe (m). */
+  dist: number;
+}
+export interface ArbreVu {
+  d: number;
+  pied: number;
+  h: number;
+  r: number;
+  dist: number;
+  /** Houppier traversé par le plan de coupe. */
+  coupe: boolean;
+  estime: boolean;
+}
+export interface Arriere {
+  profondeur: number;
+  batiments: BatimentVu[];
+  arbres: ArbreVu[];
+}
+export interface ArbreSource {
+  lat: number;
+  lon: number;
+  hauteur?: number;
+  couronne?: number;
+}
+/** Hauteur et houppier par défaut d'un arbre sans mesure (mêmes valeurs que les arbres en volume). */
+const H_ARBRE = 10, D_HOUPPIER = 7;
+
+export function vuAuDela(p: Profil, profondeur: number, bati?: GeoJSON.FeatureCollection | null, arbres?: ArbreSource[] | null): Arriere {
+  const [a, b] = [p.a, p.b];
+  const cos = Math.cos(a[1] * (Math.PI / 180));
+  const bx = (b[0] - a[0]) * 111_320 * cos, by = (b[1] - a[1]) * 110_540;
+  const L = Math.hypot(bx, by), ux = bx / L, uy = by / L;
+  // u : le long de A → B ; v : à gauche (sens trigonométrique).
+  const uv = (lon: number, lat: number): [number, number] => {
+    const x = (lon - a[0]) * 111_320 * cos, y = (lat - a[1]) * 110_540;
+    return [x * ux + y * uy, -x * uy + y * ux];
+  };
+  const solMin = (d0: number, d1: number) => {
+    let m = Infinity;
+    const i0 = Math.max(0, Math.floor(d0 / p.pas)), i1 = Math.min(p.points.length - 1, Math.ceil(d1 / p.pas));
+    for (let i = i0; i <= i1; i++) if (Number.isFinite(p.points[i].z) && p.points[i].z < m) m = p.points[i].z;
+    return m;
+  };
+  const coupes = new Set(p.batiments.map((x) => `${x.d0.toFixed(2)}`));
+  const out: Arriere = { profondeur, batiments: [], arbres: [] };
+  if (profondeur > 0)
+    for (const f of bati?.features ?? []) {
+      if (f.geometry?.type !== "Polygon") continue;
+      const pts = f.geometry.coordinates[0].map(([lon, lat]) => uv(lon, lat));
+      const vmin = Math.min(...pts.map((q) => q[1])), vmax = Math.max(...pts.map((q) => q[1]));
+      if (vmax <= 0 || vmin > profondeur) continue; // derrière nous ou trop loin
+      if (vmin <= 0) continue; // traversé par le plan : déjà dessiné en coupe
+      const d0 = Math.max(0, Math.min(...pts.map((q) => q[0]))), d1 = Math.min(L, Math.max(...pts.map((q) => q[0])));
+      if (d1 - d0 < 0.3) continue;
+      const pied = solMin(d0, d1);
+      if (!Number.isFinite(pied) || coupes.has(d0.toFixed(2))) continue;
+      out.batiments.push({ d0, d1, pied, h: Number(f.properties?.h) || 0, dist: vmin });
+    }
+  for (const t of arbres ?? []) {
+    const [u, v] = uv(t.lon, t.lat);
+    const r = (t.couronne ?? D_HOUPPIER) / 2;
+    if (u < -r || u > L + r) continue;
+    const coupe = Math.abs(v) <= r;
+    if (!coupe && (v <= 0 || v > profondeur)) continue;
+    const pied = solMin(Math.max(0, u - 0.5), Math.min(L, u + 0.5));
+    if (!Number.isFinite(pied)) continue;
+    out.arbres.push({ d: u, pied, h: t.hauteur ?? H_ARBRE, r, dist: Math.max(0, v), coupe, estime: t.hauteur === undefined });
+  }
+  // Du plus loin au plus proche : le plus proche est dessiné par-dessus.
+  out.batiments.sort((x, y) => y.dist - x.dist);
+  out.arbres.sort((x, y) => y.dist - x.dist);
+  return out;
 }
 
 // --- Dessin du profil (SVG) ----------------------------------------------------------
@@ -241,6 +350,11 @@ export interface Couleurs {
   bati: string;
   batiTrait: string;
   point: string;
+  /** Élévations au-delà du plan (bâti, arbres) et sursol LiDAR. */
+  vu: string;
+  vuTrait: string;
+  vegetal: string;
+  vegetalTrait: string;
 }
 /** Couleurs à l'écran : variables du thème (clair / sombre). */
 export const COULEURS_ECRAN: Couleurs = {
@@ -253,6 +367,10 @@ export const COULEURS_ECRAN: Couleurs = {
   bati: "var(--coupe-bati)",
   batiTrait: "var(--coupe-bati-trait)",
   point: "var(--ink)",
+  vu: "var(--coupe-vu)",
+  vuTrait: "var(--coupe-vu-trait)",
+  vegetal: "var(--coupe-vegetal)",
+  vegetalTrait: "var(--coupe-vegetal-trait)",
 };
 /** Couleurs du fichier exporté (fond blanc, pour la mise en page). */
 export const COULEURS_EXPORT: Couleurs = {
@@ -265,6 +383,10 @@ export const COULEURS_EXPORT: Couleurs = {
   bati: "#d4d0c8",
   batiTrait: "#8a8478",
   point: "#1d1d1f",
+  vu: "#f1efeb",
+  vuTrait: "#b5b0a6",
+  vegetal: "#cfe0c3",
+  vegetalTrait: "#5f8a4a",
 };
 
 export const EXAGERATIONS_COUPE = ["auto", 1, 2, 5, 10] as const;
@@ -288,17 +410,29 @@ export interface Dessin {
   marges: { g: number; d: number; h: number; b: number };
 }
 
-export function dessinerProfil(p: Profil, W: number, H: number, exagVoulue: ExagCoupe, avecBati: boolean, c: Couleurs): Dessin {
+export interface OptionsDessin {
+  exag: ExagCoupe;
+  bati: boolean;
+  sursol: boolean;
+  arriere?: Arriere | null;
+}
+
+export function dessinerProfil(p: Profil, W: number, H: number, o: OptionsDessin, c: Couleurs): Dessin {
   const m = { g: 46, d: 14, h: 26, b: 24 };
   const pw = W - m.g - m.d, ph = H - m.h - m.b;
   const ok = p.points.filter((q) => Number.isFinite(q.z));
-  let zmin = p.bas.z, zmax = p.haut.z;
-  if (avecBati) for (const b of p.batiments) zmax = Math.max(zmax, b.pied + b.h);
+  const zmin = p.bas.z;
+  let zmax = p.haut.z;
+  if (o.bati) for (const b of p.batiments) zmax = Math.max(zmax, b.pied + b.h);
+  if (o.sursol) for (const q of p.points) if (Number.isFinite(q.s) && q.s > zmax) zmax = q.s;
+  for (const b of o.arriere?.batiments ?? []) zmax = Math.max(zmax, b.pied + b.h);
+  for (const t of o.arriere?.arbres ?? []) zmax = Math.max(zmax, t.pied + t.h);
   const amplitude = Math.max(1, zmax - zmin);
   const mParPxH = p.longueur / pw;
-  // Exagération « auto » : le relief occupe ~80 % de la hauteur (jamais moins que ×1).
-  const auto = Math.max(1, (ph * 0.8 * mParPxH) / amplitude);
-  const exag = exagVoulue === "auto" ? auto : Math.min(exagVoulue, auto);
+  // Le tout tient toujours dans le cadre : « auto » occupe ~85 % de la hauteur,
+  // et une exagération choisie est réduite (jusqu'à écraser, < ×1) si besoin.
+  const tient = (ph * 0.85 * mParPxH) / amplitude;
+  const exag = o.exag === "auto" ? tient : Math.min(o.exag, tient);
   const mParPxV = mParPxH / exag;
   const centre = (zmin + zmax) / 2;
   const z0 = centre - (ph / 2) * mParPxV, z1 = centre + (ph / 2) * mParPxV;
@@ -308,19 +442,37 @@ export function dessinerProfil(p: Profil, W: number, H: number, exagVoulue: Exag
   const parts: string[] = [];
   if (c.fond !== "transparent") parts.push(`<rect width="${W}" height="${H}" ${st({ fill: c.fond })}/>`);
   // Grille des altitudes.
-  const pz = pasJoli(z1 - z0, 5);
+  const pz = pasJoli(z1 - z0, Math.max(4, Math.round(ph / 40)));
   for (let v = Math.ceil(z0 / pz) * pz; v <= z1; v += pz) {
     const y = Y(v).toFixed(1);
     parts.push(`<line x1="${m.g}" x2="${m.g + pw}" y1="${y}" y2="${y}" ${st({ stroke: c.grille, "stroke-width": 1 })}/>`);
     parts.push(`<text x="${m.g - 6}" y="${y}" dy="0.32em" text-anchor="end" ${st({ fill: c.texte2, "font-size": "10px" })}>${fr(v)} m</text>`);
   }
-  // Graduations des distances.
-  const pd = pasJoli(p.longueur, 8);
+  // Graduations des distances, avec leur rappel vertical sur toute la hauteur.
+  const pd = pasJoli(p.longueur, Math.max(6, Math.round(pw / 110)));
   for (let d = 0; d <= p.longueur + 1e-6; d += pd) {
     const x = X(d).toFixed(1);
+    parts.push(`<line x1="${x}" x2="${x}" y1="${m.h}" y2="${m.h + ph}" ${st({ stroke: c.grille, "stroke-width": 1, "stroke-dasharray": "3 3" })}/>`);
     parts.push(`<line x1="${x}" x2="${x}" y1="${m.h + ph}" y2="${m.h + ph + 4}" ${st({ stroke: c.texte2, "stroke-width": 1 })}/>`);
     parts.push(`<text x="${x}" y="${m.h + ph + 15}" text-anchor="middle" ${st({ fill: c.texte2, "font-size": "10px" })}>${d >= 1000 ? `${fr(d / 1000, 2)} km` : `${fr(d, 0)} m`}</text>`);
   }
+  // Au-delà du plan : bâti et arbres en élévation, estompés avec la distance.
+  const prof = Math.max(1, o.arriere?.profondeur ?? 1);
+  const voile = (dist: number) => (0.35 + 0.65 * (1 - Math.min(1, dist / prof))).toFixed(2);
+  const arbre = (t: ArbreVu, fill: string, trait: string, op: string) => {
+    const x = X(t.d), yb = Y(t.pied), yh = Y(t.pied + t.h);
+    const rx = Math.max(1.5, (t.r / p.longueur) * pw), hh = Math.max(2, yb - yh);
+    const ry = Math.max(1.5, Math.min(hh * 0.4, rx * exag * 1.1));
+    parts.push(
+      `<g ${st({ opacity: op })}><line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${yb.toFixed(1)}" y2="${(yh + ry).toFixed(1)}" ${st({ stroke: trait, "stroke-width": 1 })}/>` +
+        `<ellipse cx="${x.toFixed(1)}" cy="${(yh + ry).toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" ${st({ fill, stroke: trait, "stroke-width": 0.8, "stroke-dasharray": t.estime ? "2 1.5" : "none" })}/></g>`,
+    );
+  };
+  for (const b of o.arriere?.batiments ?? []) {
+    const x0 = X(b.d0), x1 = X(b.d1), yb = Y(b.pied), yh = Y(b.pied + b.h);
+    parts.push(`<rect x="${x0.toFixed(1)}" y="${yh.toFixed(1)}" width="${Math.max(0.8, x1 - x0).toFixed(1)}" height="${Math.max(0.5, yb - yh).toFixed(1)}" ${st({ fill: c.vu, stroke: c.vuTrait, "stroke-width": 0.7, opacity: voile(b.dist) })}/>`);
+  }
+  for (const t of o.arriere?.arbres ?? []) if (!t.coupe) arbre(t, c.vu, c.vegetalTrait, voile(t.dist));
   // Terrain : aplat jusqu'en bas du cadre, puis le trait du sol.
   const segs: PointProfil[][] = [];
   let cur: PointProfil[] = [];
@@ -337,14 +489,34 @@ export function dessinerProfil(p: Profil, W: number, H: number, exagVoulue: Exag
     const l = s.map((q) => `${X(q.d).toFixed(1)},${Y(q.z).toFixed(1)}`).join(" L");
     parts.push(`<path d="M${X(s[0].d).toFixed(1)},${bas} L${l} L${X(s[s.length - 1].d).toFixed(1)},${bas} Z" ${st({ fill: c.terre })}/>`);
   }
+  // Sursol mesuré par le LiDAR (MNS − MNT > 2 m) hors bâtiments coupés : surtout la végétation haute.
+  if (o.sursol && p.sursol) {
+    const dansBati = (d: number) => o.bati && p.batiments.some((b) => d >= b.d0 - 0.5 && d <= b.d1 + 0.5);
+    let run: PointProfil[] = [];
+    const fermer = () => {
+      if (run.length > 1) {
+        const haut = run.map((q) => `${X(q.d).toFixed(1)},${Y(q.s).toFixed(1)}`).join(" L");
+        const sol = [...run].reverse().map((q) => `${X(q.d).toFixed(1)},${Y(q.z).toFixed(1)}`).join(" L");
+        parts.push(`<path d="M${haut} L${sol} Z" ${st({ fill: c.vegetal, "fill-opacity": 0.85 })}/>`);
+        parts.push(`<path d="M${haut}" ${st({ fill: "none", stroke: c.vegetalTrait, "stroke-width": 1, "stroke-linejoin": "round" })}/>`);
+      }
+      run = [];
+    };
+    for (const q of p.points) {
+      if (Number.isFinite(q.s) && Number.isFinite(q.z) && q.s - q.z > 2 && !dansBati(q.d)) run.push(q);
+      else fermer();
+    }
+    fermer();
+  }
   // Bâtiments coupés : pied au plus bas du terrain, hauteur BD TOPO.
-  if (avecBati)
+  if (o.bati)
     for (const b of p.batiments) {
       const x0 = X(b.d0), x1 = X(b.d1), yb = Y(b.pied), yh = Y(b.pied + b.h);
       parts.push(
-        `<rect x="${x0.toFixed(1)}" y="${yh.toFixed(1)}" width="${Math.max(0.8, x1 - x0).toFixed(1)}" height="${Math.max(0.5, yb - yh).toFixed(1)}" ${st({ fill: c.bati, stroke: c.batiTrait, "stroke-width": 0.8, "stroke-dasharray": b.connue ? "none" : "2 2" })}/>`,
+        `<rect x="${x0.toFixed(1)}" y="${yh.toFixed(1)}" width="${Math.max(0.8, x1 - x0).toFixed(1)}" height="${Math.max(0.5, yb - yh).toFixed(1)}" ${st({ fill: c.bati, stroke: c.batiTrait, "stroke-width": 1, "stroke-dasharray": b.connue ? "none" : "2 2" })}/>`,
       );
     }
+  for (const t of o.arriere?.arbres ?? []) if (t.coupe) arbre(t, c.vegetal, c.vegetalTrait, "1");
   for (const s of segs) parts.push(`<path d="M${s.map((q) => `${X(q.d).toFixed(1)},${Y(q.z).toFixed(1)}`).join(" L")}" ${st({ fill: "none", stroke: c.trait, "stroke-width": 1.6, "stroke-linejoin": "round" })}/>`);
   // Points clés.
   const pointCle = (q: PointProfil, label: string, dessus: boolean) => {
@@ -360,7 +532,7 @@ export function dessinerProfil(p: Profil, W: number, H: number, exagVoulue: Exag
   if (loin(p.haut) && p.haut.z - Math.max(premier.z, dernier.z) > 0.2) pointCle(p.haut, `▲ ${fr(p.haut.z)} m`, true);
   if (loin(p.bas) && Math.min(premier.z, dernier.z) - p.bas.z > 0.2) pointCle(p.bas, `▼ ${fr(p.bas.z)} m`, false);
   parts.push(
-    `<text x="${m.g}" y="12" ${st({ fill: c.texte2, "font-size": "10px" })}>Exagération verticale ×${fr(exag, exag < 10 ? 1 : 0)}${exagVoulue !== "auto" && exag < exagVoulue ? " (réduite pour tenir dans le cadre)" : ""}</text>`,
+    `<text x="${m.g}" y="12" ${st({ fill: c.texte2, "font-size": "10px" })}>Échelle verticale ×${fr(exag, exag < 1 ? 2 : exag < 10 ? 1 : 0)}${exag < 0.995 ? " (écrasée pour tenir dans le cadre)" : o.exag !== "auto" && exag < o.exag ? " (réduite pour tenir dans le cadre)" : ""}</text>`,
   );
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif">${parts.join("")}</svg>`;
   return { svg, exag, xVersD: (x) => ((x - m.g) / pw) * p.longueur, dVersX: X, zVersY: Y, marges: m };

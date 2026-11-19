@@ -112,15 +112,20 @@ export const LIBELLES_ALT: Record<SourceAlt, string> = { rgealti: "RGE ALTI® 1 
 /** Altitudes de la tuile Web Mercator (z, x, y), mêmes requêtes que le terrain. */
 export const TAILLE_TUILE = TAILLE;
 const MNS_LIDAR = "IGNF_LIDAR-HD_MNS_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93";
+const MNH_LIDAR = "IGNF_LIDAR-HD_MNH_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93";
+/** Hauteur du sursol LiDAR HD (MNH = MNS − MNT, 50 cm) : hauteur des arbres, des bâtiments… au-dessus du sol. */
+export function hauteurSursolTuile(z: number, x: number, y: number): Promise<Float32Array> {
+  return altitudesTuile(z, x, y, "mnh");
+}
 /** Sursol LiDAR HD (MNS, 50 cm) : altitude du dessus des arbres, toits, etc. */
 export function sursolTuile(z: number, x: number, y: number): Promise<Float32Array> {
   return altitudesTuile(z, x, y, "mns");
 }
-export function altitudesTuile(z: number, x: number, y: number, source: SourceAlt | "mns" = "rgealti"): Promise<Float32Array> {
+export function altitudesTuile(z: number, x: number, y: number, source: SourceAlt | "mns" | "mnh" = "rgealti"): Promise<Float32Array> {
   const C = 20037508.342789244;
   const t = (2 * C) / 2 ** z;
   const bbox = [-C + x * t, C - (y + 1) * t, -C + (x + 1) * t, C - y * t].join(",");
-  const url = DEM_TUILES.replace("ignbil://", "https://").replace(COUCHES_ALT.rgealti, source === "mns" ? MNS_LIDAR : COUCHES_ALT[source]).replace("{bbox-epsg-3857}", bbox);
+  const url = DEM_TUILES.replace("ignbil://", "https://").replace(COUCHES_ALT.rgealti, source === "mns" ? MNS_LIDAR : source === "mnh" ? MNH_LIDAR : COUCHES_ALT[source]).replace("{bbox-epsg-3857}", bbox);
   return altitudesBrutes(url);
 }
 

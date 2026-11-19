@@ -157,7 +157,7 @@ function regleSurchauffe(i: SyntheseInput): Enjeu {
 
   if (i.nature) {
     if (i.nature.canopyPct < CANOPEE_FAIBLE_PCT)
-      s(d, "nature", 1, "Canopée faible (peu d'ombrage naturel)", `${i.nature.canopyPct} % du rayon analysé`);
+      s(d, "nature", 1, "Canopée faible (peu d'ombrage naturel)", `${i.nature.canopyPct} % du rayon analysé (${i.nature.sourceCanopee})`);
     if (i.nature.greenPct < VEGETAL_FAIBLE_PCT)
       s(d, "nature", 1, "Végétalisation faible (peu d'évapotranspiration)", `${i.nature.greenPct} %`);
   } else d.nonEvalues.push("Végétalisation non disponible (module Nature)");

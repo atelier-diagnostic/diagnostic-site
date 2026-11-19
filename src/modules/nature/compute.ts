@@ -29,6 +29,10 @@ export interface NatureResult {
   sol: (IndicateursSol & { millesime: string; couverturePct: number; parts: { id: ClasseCosia; titre: string; couleur: string; pct: number }[] }) | null;
   /** Source des pourcentages végétalisé / canopée. */
   sourceVerdure: "CoSIA" | "OSM";
+  /** Canopée mesurée (LiDAR HD × CoSIA) ; null si indisponible. */
+  lidar: NatureRaw["lidar"];
+  /** Source du pourcentage de canopée retenu (canopyPct). */
+  sourceCanopee: "LiDAR HD" | "CoSIA" | "OSM";
   espaceVert300: NatureRaw["espaceVert300"];
 }
 
@@ -67,6 +71,8 @@ export function computeNature(raw: NatureRaw): NatureResult {
     sol: null,
     sourceVerdure: "OSM",
     espaceVert300: raw.espaceVert300,
+    lidar: raw.lidar,
+    sourceCanopee: "OSM",
   };
   if (raw.cosia && raw.cosia.totalM2 > 0) {
     const ind = indicateursSol(raw.cosia);
@@ -82,6 +88,13 @@ export function computeNature(raw: NatureRaw): NatureResult {
     res.canopyPct = ind.canopeePct;
     res.waterPct = Math.round((raw.cosia.surfaces.eau / tot) * 1000) / 10;
     res.sourceVerdure = "CoSIA";
+    res.sourceCanopee = "CoSIA";
+  }
+  // Canopée mesurée en hauteur (végétation ≥ 3 m) : plus objective que la seule
+  // vue d'avion (CoSIA compte aussi les arbustes bas en « feuillus »).
+  if (raw.lidar && raw.lidar.couverturePct >= 50) {
+    res.canopyPct = raw.lidar.canopeePct;
+    res.sourceCanopee = "LiDAR HD";
   }
   return res;
 }

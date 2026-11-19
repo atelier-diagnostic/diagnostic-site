@@ -136,6 +136,40 @@ async function analyserMillesime(lat: number, lon: number, rayonM: number, mille
   return { millesime, surfaces, totalM2: classes * aire, couverturePct: dansCercle ? ((classes + melanges) / dansCercle) * 100 : 0, pixelM: mParPx };
 }
 
+/**
+ * Classe CoSIA de chaque pixel d'une tuile (indice dans CLASSES_COSIA ; 255 :
+ * hors couverture ou pixel de bord non classé). Millésime récent, repli sur le
+ * précédent si la tuile n'est pas couverte ; null si aucun ne la couvre.
+ */
+export async function classesCosiaTuile(z: number, x: number, y: number): Promise<{ classes: Uint8Array; millesime: string } | null> {
+  for (const m of MILLESIMES) {
+    const url = IGN_WMTS.replace("{z}", String(z)).replace("{x}", String(x)).replace("{y}", String(y)).replace("{layer}", `IGNF_COSIA_${m}`).replace("{format}", "image/png");
+    const d = await pixels(url);
+    if (!d) continue;
+    const classes = new Uint8Array(256 * 256).fill(255);
+    let n = 0;
+    for (let k = 0; k < classes.length; k++) {
+      const o = k * 4;
+      if (d[o + 3] < 128) continue;
+      let best = 0, bd = Infinity;
+      for (let c = 0; c < RGB.length; c++) {
+        const dr = d[o] - RGB[c][0], dg = d[o + 1] - RGB[c][1], db = d[o + 2] - RGB[c][2];
+        const dist = dr * dr + dg * dg + db * db;
+        if (dist < bd) {
+          bd = dist;
+          best = c;
+        }
+      }
+      if (bd <= MELANGE_MAX) {
+        classes[k] = best;
+        n++;
+      }
+    }
+    if (n > 0) return { classes, millesime: m };
+  }
+  return null;
+}
+
 export async function analyserCosia(lat: number, lon: number, rayonM: number): Promise<CosiaResultat> {
   let dernier: CosiaResultat | null = null;
   for (const m of MILLESIMES) {

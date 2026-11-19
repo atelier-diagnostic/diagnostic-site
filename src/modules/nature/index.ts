@@ -45,8 +45,16 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
           { label: "Surface végétalisée (OSM)", value: `${result.greenPct} %` },
           { label: "Canopée (bois/forêt, OSM)", value: `${result.canopyPct} %` },
         ];
+    const l = result.lidar;
+    if (l)
+      indicators.push(
+        { label: "Indice de canopée (LiDAR HD, végétation ≥ 3 m)", value: `${l.canopeePct} %` },
+        { label: "Arbres détectés (LiDAR HD)", value: `${l.nbArbres} (${l.densiteHa} / ha)` },
+        { label: "Hauteur moyenne de la canopée", value: `${l.hMoy} m (90 % sous ${l.hP90} m)` },
+      );
+    const canRetenue = result.sourceCanopee === "LiDAR HD" ? result.canopyPct : sol ? sol.canopeePct : null;
     indicators.push(
-      { label: "3-30-300 : canopée ≥ 30 %", value: sol ? (sol.canopeePct >= 30 ? "atteint" : "non atteint") : "n.d." },
+      { label: `3-30-300 : canopée ≥ 30 %${result.sourceCanopee === "LiDAR HD" ? " (LiDAR HD)" : ""}`, value: canRetenue === null ? "n.d." : canRetenue >= 30 ? "atteint" : "non atteint" },
       {
         label: "3-30-300 : espace vert ≥ 1 ha à 300 m",
         value: ev === null ? "n.d." : ev.trouve ? `atteint (${ev.nom ?? "sans nom"}, ${ev.distanceM} m)` : "non atteint",
@@ -69,6 +77,9 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
         sol
           ? `Couverture du sol : CoSIA (IGN), millésime ${sol.millesime}, mesurée pixel par pixel dans le cercle ; plans d'eau exclus des pourcentages.`
           : "Couverture du sol CoSIA indisponible : estimation OpenStreetMap (polygones non découpés au bord du rayon).",
+        l
+          ? `Canopée LiDAR : hauteur du sursol LiDAR HD (IGN) là où CoSIA voit de la végétation ligneuse ; végétation d'au moins 3 m ; arbres détectés par leurs sommets (bosquets serrés sous-comptés).`
+          : "Canopée LiDAR non mesurée (LiDAR HD non publié ici ou indisponible).",
         "Coefficient de biotope indicatif : 0 bâti et sols imperméables, 0,5 zones perméables, 1 pleine terre ; toitures et murs végétalisés non détectés.",
         "Règle 3-30-300 : le critère des 3 arbres visibles depuis chaque logement n'est pas évaluable ici.",
         "Zonages de protection (Natura 2000, ZNIEFF, réserves, parcs) : source API Carto IGN/INPN, vérifiée sur le point précis.",

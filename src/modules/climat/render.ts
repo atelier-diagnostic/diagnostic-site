@@ -2,7 +2,9 @@
 // puis le climat actuel (normales 1991-2020).
 import { Chart } from "chart.js/auto";
 import { moyennesAnnuelles, type ClimatResult, type AnneeObservee } from "./compute";
-import { fetchObserve } from "./fetch";
+import { fetchObserve, fetchUtciHoraire } from "./fetch";
+import { analyserUtci } from "./utci";
+import { afficherUtci } from "./utci-rendu";
 import { chargerReference, encartsReference, brancherEncarts } from "./reference";
 import { tempPrecipConfig, rayonnementConfig } from "./charts";
 import { headline, chiffresCles, trajectoires, calendrier, bandes } from "./fiche";
@@ -123,6 +125,8 @@ export function renderClimat(el: HTMLElement, r: ClimatResult): void {
   el.innerHTML = `
     <h3 class="module-subtitle">Caractère du climat <span class="sub-note">Köppen-Geiger · normales 1991-2020</span></h3>
     ${blocCaractere(r)}
+    <h3 class="module-subtitle">Confort extérieur <span class="sub-note">UTCI · heures observées 2016-2025</span></h3>
+    <div data-utci><p class="placeholder">Chargement des heures observées (10 ans)…</p></div>
     <p class="fiche-contexte">Horizons de la trajectoire de référence française (TRACC) :
     +2 °C en 2030, +2,7 °C en 2050.</p>
     ${fiche}
@@ -156,6 +160,7 @@ export function renderClimat(el: HTMLElement, r: ClimatResult): void {
   mountChart(el, "tp", tempPrecipConfig(r));
   mountChart(el, "ray", rayonnementConfig(r));
   void chargerBandes(el, r);
+  void chargerUtci(el, r);
   void chargerEncarts(el, r);
 }
 
@@ -167,6 +172,21 @@ async function chargerEncarts(el: HTMLElement, r: ClimatResult): Promise<void> {
   if (!slot.isConnected) return;
   slot.innerHTML = encartsReference(r, f);
   brancherEncarts(slot, r, f);
+}
+
+/** Confort extérieur : heures 2016-2025, chargées après la fiche (requête lourde, non bloquante). */
+async function chargerUtci(el: HTMLElement, r: ClimatResult): Promise<void> {
+  const slot = el.querySelector<HTMLElement>("[data-utci]");
+  if (!slot) return;
+  const h = await fetchUtciHoraire(r.site);
+  if (!slot.isConnected) return;
+  if (!h) {
+    slot.innerHTML = `<p class="error">Heures observées indisponibles (service Open-Meteo momentanément saturé) : le confort extérieur n'est pas calculé. Réessayer plus tard.</p>`;
+    return;
+  }
+  // Calcul (≈ 350 000 UTCI) après un tour de boucle, pour laisser la page s'afficher.
+  await new Promise((ok) => setTimeout(ok, 0));
+  afficherUtci(slot, analyserUtci(h, r.site.lat, r.site.lon));
 }
 
 /** Série observée 1950-2025, chargée après l'affichage de la fiche. */

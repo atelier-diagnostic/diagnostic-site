@@ -948,3 +948,18 @@ body[data-vue="atelier"] { overflow: hidden; }
 .koppen-glissement { margin: 6px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--ink-2); }
 .koppen-glissement .titre { color: var(--muted); font-size: 12px; }
 @media (max-width: 520px) { .koppen { flex-direction: column; gap: 8px; } }
+
+/* --- Confort extérieur (UTCI) --------------------------------------------- */
+.utci-situations { margin: 4px 0 8px; flex-wrap: wrap; }
+.utci-graphe { position: relative; }
+.utci-graphe canvas { display: block; width: 100%; }
+.utci-bulle { position: absolute; z-index: 1; padding: 3px 8px; border-radius: 7px; background: var(--ink); color: var(--panel); font-size: 12px; white-space: nowrap; pointer-events: none; }
+.utci-bulle[hidden] { display: none; }
+.utci-legende { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--ink-2); }
+.utci-legende i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
+.utci-lecture { margin: 8px 0; font-size: 13.5px; }
+.utci-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.utci-table th, .utci-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+.utci-table th:first-child, .utci-table thead th { text-align: left; font-weight: 500; color: var(--muted); }
+.utci-table tbody th { color: var(--ink-2); }
+@media (max-width: 520px) { .utci-table { font-size: 11.5px; } .utci-table th, .utci-table td { padding: 4px; } }

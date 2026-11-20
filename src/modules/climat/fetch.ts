@@ -207,6 +207,33 @@ export async function fetchObserve(
   }
 }
 
+/**
+ * Heures observées 2016-2025 (ERA5 via Open-Meteo) pour le confort extérieur
+ * (UTCI) : air, humidité, vent à 10 m (m/s), rayonnements global, diffus et
+ * direct normal (moyennes de l'heure écoulée). Chargé après la fiche, non
+ * bloquant ; null en cas d'échec.
+ */
+export async function fetchUtciHoraire(
+  ctx: Pick<SiteContext, "lat" | "lon" | "timezone">,
+): Promise<import("./utci").HorairesUtci | null> {
+  const vars = "temperature_2m,relative_humidity_2m,wind_speed_10m,shortwave_radiation,diffuse_radiation,direct_normal_irradiance";
+  const url =
+    `${OPEN_METEO.archive}?latitude=${ctx.lat}&longitude=${ctx.lon}` +
+    `&start_date=2016-01-01&end_date=2025-12-31&hourly=${vars}&wind_speed_unit=ms` +
+    `&timezone=${encodeURIComponent(ctx.timezone)}`;
+  try {
+    const { hourly } = await fetchJson<{ hourly: import("./utci").HorairesUtci }>(url, {
+      cacheKey: "open-meteo:utci-2016-2025",
+      ttlMs: 365 * 24 * 60 * 60 * 1000,
+      timeoutMs: 90_000,
+      retries: 3,
+    });
+    return hourly?.time?.length ? hourly : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchClimatModule(ctx: SiteContext): Promise<ClimatModuleRaw> {
   const [baseline, projections] = await Promise.all([fetchClimat(ctx), fetchProjections(ctx)]);
   // La série 1950-2025 est chargée ensuite, par l'affichage : elle ne retarde

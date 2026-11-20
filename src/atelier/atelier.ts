@@ -159,6 +159,15 @@ export function createAtelier(root: HTMLElement): Atelier {
   let coloration: Coloration = "hauteur";
   let mode3d = false;
   let rendu: "volume" | "canopee" | "point" = "volume";
+  /** Facteur appliqué au diamètre des houppiers (réglage à l'œil, retenu). */
+  let envergure = 1;
+  try {
+    envergure = Math.max(0.7, Math.min(1.6, Number(localStorage.getItem("atelier:envergure")) || 1));
+  } catch {
+    /* valeur par défaut */
+  }
+  /** Arbres tels que mesurés ou recensés, avant l'envergure. */
+  let arbresBruts: { arbres: import("../modules/soleil/fetch").ArbreOsm[]; lat0: number; lon0: number } | null = null;
   let derniersArbres: { arbres: import("../modules/soleil/fetch").ArbreOsm[]; lat0: number; lon0: number } | null = null;
   let millesime: MillesimeCosia = "2021-2023";
   let pas: (typeof PAS_CARROYAGE)[number] = 100;
@@ -232,7 +241,12 @@ export function createAtelier(root: HTMLElement): Atelier {
               <button type="button" data-rendu="volume" aria-pressed="true" title="Un volume par arbre, port selon les proportions mesurées">Arbres</button>
               <button type="button" data-rendu="canopee" aria-pressed="false" title="Surface de la canopée mesurée par le LiDAR HD, en volume : masses boisées et houppiers jointifs">Canopée</button>
               <button type="button" data-rendu="point" aria-pressed="false">Point</button>
-            </div>`
+            </div>
+            <label class="at-envergure" title="Ajuste le diamètre des houppiers (arbres LiDAR, et OSM quand il est renseigné), pour les caler à l'œil sur la photo aérienne. Agit sur la 3D, les ombres et la coupe.">
+              <span>Envergure</span>
+              <input type="range" data-envergure min="70" max="160" step="5" value="${Math.round(envergure * 100)}" aria-label="Envergure des houppiers">
+              <output>×${envergure.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}</output>
+            </label>`
         : c.produit
           ? `<div class="segmented seg-sm" role="group" aria-label="Mode de fusion">
               <button type="button" data-produit="${c.id}" data-fusion="produit" aria-pressed="true">Produit</button>
@@ -1043,6 +1057,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (b) reglages[g] = b.getAttribute(`data-${g}`)!;
     }
     root.querySelectorAll<HTMLElement>('[data-produit][aria-pressed="true"]').forEach((b) => (reglages[`produit:${b.dataset.produit}`] = b.dataset.fusion!));
+    reglages.envergure = q<HTMLInputElement>("[data-envergure]").value;
     const coches: Record<string, boolean> = { "photo-dessous": q<HTMLInputElement>("[data-photo-dessous]").checked };
     root.querySelectorAll<HTMLInputElement>("[data-theme-ign]").forEach((cb) => (coches[`theme-ign:${cb.dataset.themeIgn}`] = cb.checked));
     return {
@@ -1058,6 +1073,14 @@ export function createAtelier(root: HTMLElement): Atelier {
   function appliquerVue(v: Vue): void {
     for (const [g, val] of Object.entries(v.reglages ?? {})) {
       if (g === "mode") continue;
+      if (g === "envergure") {
+        const r = q<HTMLInputElement>("[data-envergure]");
+        if (r.value !== val) {
+          r.value = val;
+          actionner(r, "input");
+        }
+        continue;
+      }
       const sel = g.startsWith("produit:") ? `[data-produit="${g.slice(8)}"][data-fusion="${val}"]` : `[data-${g}="${val}"]`;
       const b = root.querySelector<HTMLButtonElement>(sel);
       if (b && b.getAttribute("aria-pressed") !== "true") b.click();
@@ -2059,10 +2082,8 @@ export function createAtelier(root: HTMLElement): Atelier {
           type: "FeatureCollection",
           features: arbres.map((a) => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [a.lon, a.lat] } })),
         });
-        coucheArbres.setArbres(arbres, ctx.lat, ctx.lon);
-        derniersArbres = { arbres, lat0: ctx.lat, lon0: ctx.lon };
-        if (profil) afficherCoupe();
-        demanderOmbres();
+        arbresBruts = { arbres, lat0: ctx.lat, lon0: ctx.lon };
+        poserArbres();
         etatCouche(id, texte);
         if (rendu === "canopee") void chargerCanopee3D();
       } else if (id === "canopee") {
@@ -2166,6 +2187,32 @@ export function createAtelier(root: HTMLElement): Atelier {
     compter();
     if (!site) vide.hidden = false;
   });
+
+  /** Arbres avec l'envergure choisie : volumes 3D, ombres portées et coupe. */
+  function poserArbres(): void {
+    if (!arbresBruts) return;
+    const f = envergure;
+    const arbres = f === 1 ? arbresBruts.arbres : arbresBruts.arbres.map((a) => (a.couronne ? { ...a, couronne: a.couronne * f } : a));
+    coucheArbres.setArbres(arbres, arbresBruts.lat0, arbresBruts.lon0);
+    derniersArbres = { arbres, lat0: arbresBruts.lat0, lon0: arbresBruts.lon0 };
+    if (profil) afficherCoupe();
+    demanderOmbres();
+  }
+  {
+    const r = q<HTMLInputElement>("[data-envergure]");
+    let attente = 0;
+    r.addEventListener("input", () => {
+      envergure = Number(r.value) / 100;
+      r.nextElementSibling!.textContent = `×${envergure.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}`;
+      try {
+        localStorage.setItem("atelier:envergure", String(envergure));
+      } catch {
+        /* rien */
+      }
+      clearTimeout(attente);
+      attente = window.setTimeout(poserArbres, 120); // ombres recalculées à la fin du geste
+    });
+  }
 
   /** Canopée en volume : surface LiDAR du site, posée sur le terrain. */
   let canopee3DPour: SiteContext | null = null;

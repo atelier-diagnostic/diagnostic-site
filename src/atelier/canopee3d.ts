@@ -95,6 +95,25 @@ export function creerCoucheCanopee3D(id: string): CoucheCanopee3D {
           }
         lis[g] = t / n;
       }
+    // Retours du 20/11 : canopée trop étroite. Le masque « végétation ≥ 3 m »
+    // rogne les franges des houppiers ; on l'élargit d'environ 1 m (une maille
+    // au moins), à 85 % de la hauteur voisine, avant d'arrondir les bords.
+    const elargir = Math.max(1, Math.round(1 / (s.pasM * pas)));
+    for (let passe = 0; passe < elargir; passe++) {
+      const src = lis.slice();
+      for (let j = 0; j < H; j++)
+        for (let i = 0; i < W; i++) {
+          const g = j * W + i;
+          if (src[g]) continue;
+          let m = 0;
+          for (let dj = -1; dj <= 1; dj++)
+            for (let di = -1; di <= 1; di++) {
+              const ii = i + di, jj = j + dj;
+              if (ii >= 0 && jj >= 0 && ii < W && jj < H && src[jj * W + ii] > m) m = src[jj * W + ii];
+            }
+          if (m) lis[g] = m * 0.85;
+        }
+    }
     const lonDe = (i: number) => s.ouest + (i * pas + pas / 2) * s.pasLon;
     const latDe = (j: number) => s.nord - (j * pas + pas / 2) * s.pasLat;
     // Sol : lu sur une grille lâche (tous les 8 points) puis interpolé.
@@ -158,7 +177,7 @@ export function creerCoucheCanopee3D(id: string): CoucheCanopee3D {
         const x = (lonDe(i) - lon0) * mLon, z = -(latDe(j) - lat0) * mLat, y0 = solEn(i, j);
         if (v) {
           const hb = v * BASE;
-          const rayonArrondi = Math.max(1.5, 0.25 * v) / pasM;
+          const rayonArrondi = Math.max(1, 0.15 * v) / pasM;
           const e = Math.min(1, dist[g] / rayonArrondi);
           const yt = hb + (v - hb) * Math.sqrt(1 - (1 - e) * (1 - e));
           iDessus[g] = pos.length / 3;

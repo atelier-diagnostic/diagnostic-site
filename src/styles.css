@@ -936,3 +936,15 @@ body[data-vue="atelier"] { overflow: hidden; }
   .at-coupe-actions { margin-left: 0; }
 }
 .at-coupe.reduite .at-coupe-profil, .at-coupe.reduite .at-coupe-source { display: none; }
+
+/* --- Caractère du climat (Köppen-Geiger) ----------------------------------- */
+.koppen { display: flex; gap: 16px; align-items: flex-start; margin: 4px 0 14px; }
+.koppen-code {
+  flex: none; display: grid; place-items: center; min-width: 76px; height: 64px; padding: 0 10px; border-radius: 14px;
+  background: var(--ink); color: var(--panel); font-size: 28px; font-weight: 700; letter-spacing: 0.02em;
+}
+.koppen-texte b { font-size: 17px; }
+.koppen-texte p { margin: 4px 0; }
+.koppen-glissement { margin: 6px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--ink-2); }
+.koppen-glissement .titre { color: var(--muted); font-size: 12px; }
+@media (max-width: 520px) { .koppen { flex-direction: column; gap: 8px; } }

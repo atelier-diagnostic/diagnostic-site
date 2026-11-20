@@ -179,7 +179,7 @@ export async function fetchProjections(ctx: SiteContext): Promise<ProjectionRaw[
 export interface ClimatModuleRaw {
   baseline: ClimatRaw;
   projections: ProjectionRaw[];
-  site: { lat: number; lon: number; timezone: string };
+  site: { lat: number; lon: number; timezone: string; insee?: string; altitude?: number | null };
 }
 
 /**
@@ -211,5 +211,5 @@ export async function fetchClimatModule(ctx: SiteContext): Promise<ClimatModuleR
   const [baseline, projections] = await Promise.all([fetchClimat(ctx), fetchProjections(ctx)]);
   // La série 1950-2025 est chargée ensuite, par l'affichage : elle ne retarde
   // pas la fiche (Open-Meteo freine les requêtes lourdes successives).
-  return { baseline, projections, site: { lat: ctx.lat, lon: ctx.lon, timezone: ctx.timezone } };
+  return { baseline, projections, site: { lat: ctx.lat, lon: ctx.lon, timezone: ctx.timezone, insee: ctx.insee, altitude: ctx.altitude } };
 }

@@ -7,6 +7,57 @@ import { chargerReference, encartsReference, brancherEncarts } from "./reference
 import { tempPrecipConfig, rayonnementConfig } from "./charts";
 import { headline, chiffresCles, trajectoires, calendrier, bandes } from "./fiche";
 import type { ChartConfiguration } from "chart.js";
+import { koppen, traits, zoneRE2020, MOIS_LONGS } from "./caractere";
+
+const frn = (v: number, d = 1) => v.toLocaleString("fr-FR", { maximumFractionDigits: d });
+
+/** Caractère du climat : Köppen-Geiger (et son glissement), grands traits, zone RE2020, diagramme de Gaussen. */
+export function blocCaractere(r: ClimatResult): string {
+  const m = r.monthly;
+  const k = koppen(m.tMean, m.precip, r.site.lat);
+  const t = traits(m, r.site.lat);
+  const z = zoneRE2020(r.site.insee, r.site.altitude ?? null);
+  const glissements = r.projections
+    .map((p) => {
+      const k2 = koppen(m.tMean.map((v, i) => v + (p.deltaTMois[i] ?? 0)), m.precip, r.site.lat);
+      const h = p.id === "2050" ? "2050" : "2030";
+      return k2.code === k.code
+        ? `<li>${h} : <b>${k2.code}</b> inchangé</li>`
+        : `<li>${h} : <b>${k.code} → ${k2.code}</b>, ${k2.nom.toLowerCase()}</li>`;
+    })
+    .join("");
+  const moisSecs = t.moisSecs.length
+    ? t.moisSecs.length >= 2 && t.moisSecs.every((v, i, a) => i === 0 || v === a[i - 1] + 1)
+      ? `${MOIS_LONGS[t.moisSecs[0]]} à ${MOIS_LONGS[t.moisSecs[t.moisSecs.length - 1]]}`
+      : t.moisSecs.map((i) => MOIS_LONGS[i]).join(", ")
+    : "aucun";
+  return `
+    <div class="koppen">
+      <div class="koppen-code" title="Classe de Köppen-Geiger">${k.code}</div>
+      <div class="koppen-texte">
+        <b>${k.nom}</b>
+        <p>${k.description}</p>
+        <p class="module-note">Calculée sur les normales du site : ${k.criteres.join(" · ")}.</p>
+        ${glissements ? `<ul class="koppen-glissement"><li class="titre">Avec les températures projetées (pluies supposées inchangées) :</li>${glissements}</ul>` : ""}
+      </div>
+    </div>
+    <div class="indicators">
+      ${indicator(`Amplitude annuelle · ${t.lectureContinentalite}`, `${frn(t.amplitude)} °C`)}
+      ${indicator("Mois secs (P < 2T)", `${t.moisSecs.length}`)}
+      ${indicator("Pluie annuelle", `${frn(t.pluieAnnuelle, 0)} mm`)}
+      ${indicator("Bilan hydrique P − ETP · année · été", `${t.bilan > 0 ? "+" : ""}${frn(t.bilan, 0)} · ${t.bilanEte > 0 ? "+" : ""}${frn(t.bilanEte, 0)} mm`)}
+      ${indicator("Jours de gel / an", `${frn(r.joursGel, 0)}`)}
+      ${indicator("Rayonnement global", `${frn(t.rayonnementKwh, 0)} kWh/m²·an`)}
+      ${z ? indicator(`Zone RE2020${z.altitude ? ` · altitude ${z.altitude}` : ""}`, z.zone) : ""}
+    </div>
+    <div class="chart-box"><canvas data-chart="tp"></canvas></div>
+    <p class="module-note">Diagramme ombrothermique de Gaussen (échelle des pluies = 2 × celle des températures) :
+    un mois est sec quand les pluies passent sous la courbe de température moyenne. Mois secs : ${moisSecs}.
+    Amplitude : écart entre le mois le plus chaud et le plus froid (indice de continentalité de Gorczyński : ${frn(t.continentalite)}).
+    Bilan hydrique : pluie moins évapotranspiration de référence (FAO-56) ; négatif en été = arrosage, stress des
+    végétaux, intérêt de la récupération des eaux de pluie. Köppen-Geiger : critères de Peel et al. (2007), mois le plus froid à 0 °C
+    pour séparer tempéré et continental, été d'avril à septembre.${z ? ` Zone climatique de la RE2020 selon le département (${z.departement}) et l'altitude du point.` : ""}</p>`;
+}
 
 function indicator(label: string, value: string): string {
   return `<div class="indicator"><span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
@@ -70,6 +121,8 @@ export function renderClimat(el: HTMLElement, r: ClimatResult): void {
       </details>`;
 
   el.innerHTML = `
+    <h3 class="module-subtitle">Caractère du climat <span class="sub-note">Köppen-Geiger · normales 1991-2020</span></h3>
+    ${blocCaractere(r)}
     <p class="fiche-contexte">Horizons de la trajectoire de référence française (TRACC) :
     +2 °C en 2030, +2,7 °C en 2050.</p>
     ${fiche}
@@ -86,7 +139,6 @@ export function renderClimat(el: HTMLElement, r: ClimatResult): void {
       ${indicator("Jours ≥ 35 °C / an", `${r.joursChaleur35}`)}
       ${indicator("Vagues de chaleur / an", `${r.vaguesChaleur}`)}
     </div>
-    <div class="chart-box"><canvas data-chart="tp"></canvas></div>
     <div class="chart-box"><canvas data-chart="ray"></canvas></div>
     <p class="module-note">Normales calculées sur ${r.years} ans (réanalyse ERA5,
     période 1991-2020). DJU base 18 °C. Vague de chaleur = ≥ 3 jours consécutifs

@@ -37,6 +37,7 @@ import { carroyage } from "./lambert93";
 import { creerCoucheArbres3D } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
 import { creerCoucheCoupe3D } from "./coupe3d";
+import { creerCoucheCanopee3D } from "./canopee3d";
 import { analyserCanopee, CLASSES_HAUTEUR, type CanopeeLidar } from "../core/canopee-lidar";
 import { calculerProfil, dessinerProfil, vuAuDela, penteEn, profilCsv, distanceM, COULEURS_ECRAN, COULEURS_EXPORT, EXAGERATIONS_COUPE, type Profil, type ExagCoupe } from "./coupe";
 import { FOCALES, FOCALE_DEFAUT, champVertical, lireVues, ecrireVues, vuesDeDepart, exporterVues, lireExport, type Vue } from "./vues";
@@ -157,7 +158,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   let fond: Fond = "plan";
   let coloration: Coloration = "hauteur";
   let mode3d = false;
-  let rendu: "volume" | "point" = "volume";
+  let rendu: "volume" | "canopee" | "point" = "volume";
   let derniersArbres: { arbres: import("../modules/soleil/fetch").ArbreOsm[]; lat0: number; lon0: number } | null = null;
   let millesime: MillesimeCosia = "2021-2023";
   let pas: (typeof PAS_CARROYAGE)[number] = 100;
@@ -171,7 +172,17 @@ export function createAtelier(root: HTMLElement): Atelier {
   /** Analyse LiDAR de la canopée, une par site (partagée par la canopée et les arbres). */
   let canopee: { ctx: SiteContext; p: Promise<CanopeeLidar> } | null = null;
   const canopeePour = (ctx: SiteContext) => {
-    if (canopee?.ctx !== ctx) canopee = { ctx, p: analyserCanopee(ctx.lat, ctx.lon, ctx.radiusM ?? 150) };
+    if (canopee?.ctx !== ctx) {
+      // Progression affichée dans les couches qui l'attendent (le service LiDAR peut être lent sur un grand cercle).
+      let fini = false;
+      const p = analyserCanopee(ctx.lat, ctx.lon, ctx.radiusM ?? 150, (f, t) => {
+        if (fini || site !== ctx) return;
+        for (const id of ["canopee", "arbres"])
+          if (etat.get(id)!.actif && (id === "canopee" || sourceArbres === "lidar")) etatCouche(id, `Lecture du LiDAR HD et de CoSIA : ${f} / ${t} tuiles…`);
+      });
+      p.finally(() => (fini = true)).catch(() => {});
+      canopee = { ctx, p };
+    }
     return canopee.p;
   };
   /** Bâtiments chargés (pour les coupes). */
@@ -218,7 +229,8 @@ export function createAtelier(root: HTMLElement): Atelier {
               <button type="button" data-arbres-src="osm" aria-pressed="false">OpenStreetMap</button>
             </div>
             <div class="segmented seg-sm" role="group" aria-label="Rendu des arbres">
-              <button type="button" data-rendu="volume" aria-pressed="true">Volume</button>
+              <button type="button" data-rendu="volume" aria-pressed="true" title="Un volume par arbre, port selon les proportions mesurées">Arbres</button>
+              <button type="button" data-rendu="canopee" aria-pressed="false" title="Surface de la canopée mesurée par le LiDAR HD, en volume : masses boisées et houppiers jointifs">Canopée</button>
               <button type="button" data-rendu="point" aria-pressed="false">Point</button>
             </div>`
         : c.produit
@@ -643,6 +655,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 140 }), "bottom-right");
   // Arbres en volume (three.js), sous le carroyage et le périmètre.
   const coucheArbres = creerCoucheArbres3D("arbres-3d");
+  const coucheCanopee3D = creerCoucheCanopee3D("canopee-3d");
   const coucheCourse = creerCoucheCourseSoleil("course-3d");
   coucheCourse.setPlan(true); // l'atelier s'ouvre en 2D
   const coucheCoupe3D = creerCoucheCoupe3D("coupe-3d");
@@ -650,6 +663,8 @@ export function createAtelier(root: HTMLElement): Atelier {
     map.once("load", () => {
       map.addLayer(coucheArbres, "carroyage");
       map.setLayoutProperty("arbres-3d", "visibility", "none");
+      map.addLayer(coucheCanopee3D, "carroyage");
+      map.setLayoutProperty("canopee-3d", "visibility", "none");
       map.addLayer(coucheCourse, "carroyage");
       map.setLayoutProperty("course-3d", "visibility", "none");
       map.addLayer(coucheCoupe3D, "carroyage");
@@ -672,7 +687,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     perte.hidden = false;
   });
   map.on("webglcontextrestored", () => {
-    for (const [id, c] of [["arbres-3d", coucheArbres], ["course-3d", coucheCourse], ["coupe-3d", coucheCoupe3D]] as const) {
+    for (const [id, c] of [["arbres-3d", coucheArbres], ["canopee-3d", coucheCanopee3D], ["course-3d", coucheCourse], ["coupe-3d", coucheCoupe3D]] as const) {
       if (map.getLayer(id)) map.removeLayer(id);
       map.addLayer(c, map.getLayer("carroyage") ? "carroyage" : undefined);
     }
@@ -689,7 +704,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (id === "fond") return [];
     if (id === "cadastre") return ["cadastre", "cadastre-numeros"];
     if (id === "bati") return ["bati-2d", "bati-3d"];
-    if (id === "arbres") return ["arbres", "arbres-3d"];
+    if (id === "arbres") return ["arbres", "arbres-3d", "canopee-3d"];
     if (id === "repere") return [];
     if (id === "course") return ["course-3d"];
     if (id === "courbes") return ["courbes", "courbes-cotes"];
@@ -734,6 +749,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       // Arbres en volume dans les deux vues (vus en plan en 2D), ou en points.
       if (lid === "arbres") visible = e.actif && rendu === "point";
       if (lid === "arbres-3d") visible = e.actif && rendu === "volume";
+      if (lid === "canopee-3d") visible = e.actif && rendu === "canopee";
       if (lid === "cadastre-numeros") visible = e.actif && numerosCadastre;
       map.setLayoutProperty(lid, "visibility", visible ? "visible" : "none");
       const prop = PROP[layer.type];
@@ -743,6 +759,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       const net = lid === "isochrones-ligne" || lid === "patrimoine-abords" || lid.endsWith("-ligne") || lid === "patrimoine-noms";
       if (prop && !net) map.setPaintProperty(lid, prop, aplatLeger ? e.opacite * 0.3 : e.opacite);
       if (lid === "arbres-3d") coucheArbres.setOpacite(e.opacite);
+      if (lid === "canopee-3d") coucheCanopee3D.setOpacite(e.opacite);
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
       if (lid === "courbes-cotes") map.setPaintProperty(lid, "text-opacity", e.opacite);
@@ -854,6 +871,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       root.querySelectorAll("[data-rendu]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       await pret;
       appliquer("arbres");
+      if (rendu === "canopee") void chargerCanopee3D();
     }),
   );
   root.querySelectorAll<HTMLButtonElement>("[data-pas]").forEach((b) =>
@@ -1279,6 +1297,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (cleSol === "") return;
       cleSol = "";
       coucheArbres.setSol(null);
+      coucheCanopee3D.setSol(null);
       coucheCourse.setAltitude(0);
       return;
     }
@@ -1291,6 +1310,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (cle === cleSol) return;
       cleSol = cle;
       coucheArbres.setSol(alt);
+      coucheCanopee3D.setSol(alt);
       coucheCourse.setAltitude(alt(site.lon, site.lat) ?? 0);
     }, 300);
   }
@@ -1843,6 +1863,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (!sun) {
       map.setLight({ anchor: "viewport", position: [1.15, 210, 30], color: "#ffffff", intensity: 0.5 });
       coucheArbres.setSoleil(null);
+      coucheCanopee3D.setSoleil(null);
       return;
     }
     const neutre = coloration === "neutre";
@@ -1850,6 +1871,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (el <= 0.5) {
       map.setLight({ anchor: "map", position: [1.5, sun.azimuthDeg, 80], color: neutre ? "#8a93b8" : "#ffffff", intensity: neutre ? 0.45 : 0.3 });
       coucheArbres.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
+      coucheCanopee3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
       return;
     }
     const t = Math.min(1, el / 45); // 0 : soleil rasant, 1 : soleil haut
@@ -1864,6 +1886,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       intensity: neutre ? 0.72 + 0.13 * t : 0.6,
     });
     coucheArbres.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });
+    coucheCanopee3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });
   }
 
   function demanderOmbres(): void {
@@ -2020,11 +2043,12 @@ export function createAtelier(root: HTMLElement): Atelier {
         if (sourceArbres === "lidar") {
           try {
             const c = await canopeePour(ctx);
+            if (!c.arbresDetectes) throw new Error("cercle trop grand");
             arbres = c.arbres;
             texte = `${arbres.length} arbres détectés dans le LiDAR HD (${fr(c.densiteHa)} / ha), hauteur et houppier mesurés.` + (c.couverturePct < 95 ? ` LiDAR ou CoSIA sur ${fr(c.couverturePct)} % du cercle seulement.` : "");
           } catch {
             arbres = await fetchTrees(ctx, r);
-            texte = `LiDAR HD pas encore publié ici ou indisponible : ${arbres.length} arbres OpenStreetMap.`;
+            texte = `Arbres LiDAR non détectés (LiDAR HD pas encore publié, service muet, ou cercle de plus de 1,1 km : canopée seule) : ${arbres.length} arbres OpenStreetMap.`;
           }
         } else {
           arbres = await fetchTrees(ctx, r);
@@ -2040,6 +2064,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         if (profil) afficherCoupe();
         demanderOmbres();
         etatCouche(id, texte);
+        if (rendu === "canopee") void chargerCanopee3D();
       } else if (id === "canopee") {
         etatCouche(id, "Lecture du LiDAR HD et de CoSIA…");
         const c = await canopeePour(ctx);
@@ -2062,7 +2087,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         etatCouche(
           id,
           `Canopée ${fr(c.canopeePct)} % du cercle de ${c.rayonM} m · hauteur moyenne ${fr(c.hMoy)} m, 90 % sous ${fr(c.hP90)} m · ` +
-            `${c.arbres.length} arbres détectés. LiDAR HD × CoSIA ${c.millesimeCosia}, pixels de ${fr(c.pixelM)} m` +
+            (c.arbresDetectes ? `${c.arbres.length} arbres détectés. ` : "cercle trop grand pour détecter les arbres un à un. ") + `LiDAR HD × CoSIA ${c.millesimeCosia}, pixels de ${fr(c.pixelM)} m` +
             (c.couverturePct < 95 ? ` ; données sur ${fr(c.couverturePct)} % du cercle.` : "."),
         );
       } else if (id === "vegetation") {
@@ -2141,6 +2166,23 @@ export function createAtelier(root: HTMLElement): Atelier {
     compter();
     if (!site) vide.hidden = false;
   });
+
+  /** Canopée en volume : surface LiDAR du site, posée sur le terrain. */
+  let canopee3DPour: SiteContext | null = null;
+  async function chargerCanopee3D(): Promise<void> {
+    if (!site || canopee3DPour === site) return;
+    const ctx = site;
+    etatCouche("arbres", "Lecture de la canopée LiDAR…");
+    try {
+      const c = await canopeePour(ctx);
+      if (site !== ctx) return;
+      coucheCanopee3D.setCanopee(c.surface, ctx.lat, ctx.lon);
+      canopee3DPour = ctx;
+      etatCouche("arbres", `Canopée mesurée en volume (LiDAR HD, maille de ${c.surface.pasM.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} m) : ${c.canopeePct.toLocaleString("fr-FR")} % du cercle, jusqu'à ${c.hMax.toLocaleString("fr-FR")} m.`);
+    } catch {
+      etatCouche("arbres", "Canopée LiDAR indisponible ici (LiDAR HD pas encore publié ou service muet) : rendu « Arbres » conseillé.");
+    }
+  }
 
   // --- Mise en page et export ------------------------------------------------------
   brancherMiseEnPage({

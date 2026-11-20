@@ -49,7 +49,7 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
     if (l)
       indicators.push(
         { label: "Indice de canopée (LiDAR HD, végétation ≥ 3 m)", value: `${l.canopeePct} %` },
-        { label: "Arbres détectés (LiDAR HD)", value: `${l.nbArbres} (${l.densiteHa} / ha)` },
+        { label: "Arbres détectés (LiDAR HD)", value: l.arbresDetectes ? `${l.nbArbres} (${l.densiteHa} / ha)` : "n.d. (cercle trop grand)" },
         { label: "Hauteur moyenne de la canopée", value: `${l.hMoy} m (90 % sous ${l.hP90} m)` },
       );
     const canRetenue = result.sourceCanopee === "LiDAR HD" ? result.canopyPct : sol ? sol.canopeePct : null;

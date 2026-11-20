@@ -46,8 +46,8 @@ const COMPOSE = { "theme-ign:fond": true, "theme-ign:eau": true, "theme-ign:vege
 const DEPARTS: Depart[] = [
   {
     nom: "Grand paysage",
-    actives: { fond: 0.8, relief: 1, courbes: 0.85, "lidar-mnt": 0.6, "patrimoine-sites": 0.6, protegees: 0.5 },
-    reglages: { fond: "compose", exag: "1.5", courbes: "auto", "produit:lidar-mnt": "produit", mode: "3d" },
+    actives: { fond: 0.8, relief: 1, courbes: 0.85, "lidar-mnt": 0.6, arbres: 1, "patrimoine-sites": 0.6, protegees: 0.5 },
+    reglages: { fond: "compose", exag: "1.5", courbes: "auto", "produit:lidar-mnt": "produit", "arbres-src": "lidar", rendu: "canopee", mode: "3d" },
     coches: { ...COMPOSE, "theme-ign:fond": false, "theme-ign:relief": false, "photo-dessous": true },
     photo: { opacite: 1, couleurs: 0.5, eclaircir: 0.15 },
     camera: { pitch: 62, bearing: -20, focale: 24 },

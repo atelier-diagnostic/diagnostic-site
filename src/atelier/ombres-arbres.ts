@@ -56,14 +56,17 @@ export function ombresArbres(arbres: ArbreOsm[], azimutDeg: number, hauteurDeg: 
         return [cx + Math.cos(t) * r, cy + Math.sin(t) * r] as P;
       });
     };
-    const pts: P[] = g.resineux
-      ? [...disque(g.fut, g.rayon), proj(g.h)]
-      : [...disque(g.cy - g.sy * 0.7, g.rayon * 0.7), ...disque(g.cy, g.rayon), ...disque(g.cy + g.sy * 0.7, g.rayon * 0.7)];
+    const pts: P[] =
+      g.forme === "cone"
+        ? [...disque(g.fut, g.rayon), proj(g.h)]
+        : g.forme === "parasol" || g.forme === "etale"
+          ? [...disque(g.cy - g.sy * 0.35, g.rayon), ...disque(g.cy + g.sy * 0.35, g.rayon * 0.9), ...disque(g.cy + g.sy * 0.85, g.rayon * 0.35)]
+          : [...disque(g.cy - g.sy * 0.7, g.rayon * 0.7), ...disque(g.cy, g.rayon), ...disque(g.cy + g.sy * 0.7, g.rayon * 0.7)];
     const toLL = ([x, y]: P): P => [a.lon + x / mLon, a.lat + y / mLat];
     const houppier = enveloppe(pts).map(toLL);
     polygones.push([[...houppier, houppier[0]]]);
     // Tronc : bande fine du pied au bas du houppier.
-    const [ex, ey] = proj(g.resineux ? g.fut : g.cy - g.sy * 0.7);
+    const [ex, ey] = proj(g.forme === "cone" ? g.fut : g.forme === "parasol" ? g.cy - g.sy * 0.35 : g.cy - g.sy * 0.7);
     const w = 0.25;
     const tronc: P[] = [[-dy * w, dx * w], [dy * w, -dx * w], [ex + dy * w, ey - dx * w], [ex - dy * w, ey + dx * w]].map((p) => toLL(p as P));
     polygones.push([[...tronc, tronc[0]]]);

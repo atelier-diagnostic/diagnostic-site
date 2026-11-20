@@ -242,7 +242,12 @@ async function calculer(lat: number, lon: number, rayonM: number, progression?: 
     aire[s] = 1;
     file.push(g);
   });
-  const portee = sommets.map((g) => ((0.35 * hs[g] + 1) / pixelM) ** 2);
+  // Retours du 20/11 (Le Niel) : houppiers sous-dimensionnés. Portée élargie
+  // (0,5 h + 1,5 m), seuil abaissé (30 % de la hauteur du sommet) et bord du
+  // houppier admis jusqu'à 1,5 m de haut s'il est végétal (franges retombantes,
+  // hors du masque « canopée ≥ 3 m »).
+  const portee = sommets.map((g) => ((0.5 * hs[g] + 1.5) / pixelM) ** 2);
+  const loinMax = new Float32Array(sommets.length);
   while (file.length) {
     const suite: number[] = [];
     for (const g of file) {
@@ -252,8 +257,10 @@ async function calculer(lat: number, lon: number, rayonM: number, progression?: 
         const ii = i + di, jj = j + dj;
         if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
         const gg = jj * W + ii;
-        if (proprio[gg] !== -1 || !can[gg] || h[gg] < 0.4 * hs[gs]) continue;
-        if ((ii - is) ** 2 + (jj - js) ** 2 > portee[s]) continue;
+        if (proprio[gg] !== -1 || !(can[gg] || (veg[gg] === 1 && h[gg] >= 1.5)) || h[gg] < 0.3 * hs[gs]) continue;
+        const d2 = (ii - is) ** 2 + (jj - js) ** 2;
+        if (d2 > portee[s]) continue;
+        if (d2 > loinMax[s]) loinMax[s] = d2;
         proprio[gg] = s;
         aire[s]++;
         suite.push(gg);
@@ -279,7 +286,9 @@ async function calculer(lat: number, lon: number, rayonM: number, progression?: 
       lat: la,
       lon: lo,
       hauteur: Math.round(hs[g] * 10) / 10,
-      couronne: Math.round(Math.max(1.5, 2 * Math.sqrt((aire[s] * aPx) / Math.PI)) * 10) / 10,
+      // Diamètre : le plus grand de la surface équivalente et de l'étendue (85 % de la
+      // plus grande distance au sommet) ; un houppier partagé avec un voisin garde ainsi son envergure.
+      couronne: Math.round(Math.max(1.5, 2 * Math.sqrt((aire[s] * aPx) / Math.PI), 2 * 0.85 * Math.sqrt(loinMax[s]) * pixelM + pixelM) * 10) / 10,
       resineux: nt > 0 && nc / nt > 0.5,
       mesure: true as const,
     };

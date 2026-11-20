@@ -68,9 +68,11 @@ function gabaritMesure(hm: number, rayonM: number, resineux: boolean): GabaritAr
   const h = Math.max(3, Math.min(45, hm));
   const rayon = Math.max(1, Math.min(16, rayonM));
   if (resineux && (2 * rayon) / h >= 0.8) {
-    const sy = Math.max(1, Math.min(h * 0.17, rayon * 0.5));
-    const cy = h - sy * 0.9;
-    return { h, rayon, fut: cy - sy * 0.35, sy, cy, resineux, forme: "parasol" };
+    // Retours du 20/11 : houppier épais (≈ 30 % de la hauteur), pas un chapeau
+    // de champignon ; dessous bombé ; fût épais qui se divise en charpentières.
+    const sy = Math.max(1.5, Math.min(h * 0.25, rayon * 0.65));
+    const cy = h - sy * 0.95;
+    return { h, rayon, fut: cy - sy * 0.5, sy, cy, resineux, forme: "parasol" };
   }
   if (resineux && (2 * rayon) / h >= 0.5) {
     const sy = Math.max(1.2, Math.min(h * 0.24, rayon * 0.7));
@@ -87,12 +89,15 @@ function gabaritMesure(hm: number, rayonM: number, resineux: boolean): GabaritAr
   return { h, rayon, fut, sy, cy: Math.max(fut + sy * 0.7, h - sy), resineux, forme: "rond" };
 }
 
-/** Houppier en ombrelle (pin parasol) : dessous plat, dôme bas, facetté. Hauteur unité ≈ 1,25 (de −0,35 à 0,9). */
+/**
+ * Houppier en ombrelle (pin parasol) : dôme large et épais, dessous bombé,
+ * bord arrondi, facetté. Hauteur unité ≈ 1,45 (de −0,5 à 0,95).
+ */
 function geometrieParasol(): THREE.BufferGeometry {
   const profil = [
-    [0, -0.35], [0.7, -0.35], [0.97, -0.2], [1, 0.05], [0.9, 0.35], [0.65, 0.65], [0.3, 0.86], [0, 0.9],
+    [0, -0.5], [0.35, -0.47], [0.68, -0.38], [0.9, -0.22], [1, 0.02], [0.97, 0.28], [0.84, 0.55], [0.6, 0.78], [0.3, 0.92], [0, 0.95],
   ].map(([x, y]) => new THREE.Vector2(x, y));
-  return new THREE.LatheGeometry(profil, 10);
+  return new THREE.LatheGeometry(profil, 12);
 }
 
 export interface CoucheArbres3D extends maplibregl.CustomLayerInterface {
@@ -183,13 +188,15 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
       const mLon = 111_320 * Math.cos((lat0 * Math.PI) / 180);
       const liste = arbres.slice(0, MAX_ARBRES);
 
-      const troncs = new THREE.InstancedMesh(geoTronc, matTronc, liste.length);
+      // Fût, plus les charpentières des pins (trois pour le parasol, deux pour le pin d'Alep).
+      const troncs = new THREE.InstancedMesh(geoTronc, matTronc, liste.length * 4);
+      let nTroncs = 0;
       const parForme = [geoFeuillus[0], geoFeuillus[1], geoResineux, geoParasol].map((g) => ({ g, items: [] as THREE.Matrix4[], couleurs: [] as THREE.Color[] }));
       const m4 = new THREE.Matrix4();
       const q = new THREE.Quaternion();
       const axeY = new THREE.Vector3(0, 1, 0);
 
-      liste.forEach((a, i) => {
+      liste.forEach((a) => {
         const x = (a.lon - lon0) * mLon;
         const z = -(a.lat - lat0) * mLat;
         const r1 = alea(a.lat, a.lon, 1);
@@ -199,23 +206,44 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
         const y0 = sol?.(a.lon, a.lat) ?? 0;
 
         // Fût jusque dans le houppier ; plus épais pour les grands sujets.
-        const ep = port === "parasol" || port === "etale" ? 2 + rayon * 0.12 : 1.2 + rayon * 0.08;
+        const ep = port === "parasol" ? 3.2 + rayon * 0.2 : port === "etale" ? 2.6 + rayon * 0.15 : 1.2 + rayon * 0.08;
         // Pin d'Alep : fût et houppier légèrement penchés (jusqu'à 10°), direction stable.
         const penche = port === "etale" ? (r3 - 0.5) * 0.35 : 0;
         const qT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(r1 * 6.28), 0, Math.sin(r1 * 6.28)), penche);
-        m4.compose(new THREE.Vector3(x, y0, z), qT, new THREE.Vector3(ep, port === "parasol" ? fut + sy * 0.3 : port === "etale" ? fut + sy * 0.5 : fut + rayon * 0.5, ep));
-        troncs.setMatrixAt(i, m4);
+        // Pins : le fût s'arrête à la fourche (60 % de la hauteur sous le houppier), puis les charpentières s'écartent.
+        const pin = port === "parasol" || port === "etale";
+        const fourche = pin ? fut * 0.62 : 0;
+        m4.compose(new THREE.Vector3(x, y0, z), qT, new THREE.Vector3(ep, pin ? fourche + 0.3 : fut + rayon * 0.5, ep));
+        troncs.setMatrixAt(nTroncs++, m4);
+        if (pin) {
+          const n = port === "parasol" ? 3 : 2;
+          const haut = fut + sy * 0.15 - fourche; // jusque dans le houppier
+          for (let b = 0; b < n; b++) {
+            const az = r1 * 6.28 + (b * 2 * Math.PI) / n + (r2 - 0.5) * 0.6;
+            const ecart = rayon * (port === "parasol" ? 0.42 : 0.3) * (0.8 + 0.4 * alea(a.lat, a.lon, 10 + b));
+            const incl = Math.atan2(ecart, haut);
+            const axe = new THREE.Vector3(Math.cos(az), 0, -Math.sin(az)).cross(axeY).normalize();
+            // Composée avec l'inclinaison du fût (pin d'Alep), depuis le haut du fût penché.
+            const qb = qT.clone().multiply(new THREE.Quaternion().setFromAxisAngle(axe, -incl));
+            const lg = Math.hypot(ecart, haut);
+            const base = new THREE.Vector3(0, fourche, 0).applyQuaternion(qT).add(new THREE.Vector3(x, y0, z));
+            m4.compose(base, qb, new THREE.Vector3(ep * 0.62, lg, ep * 0.62));
+            troncs.setMatrixAt(nTroncs++, m4);
+          }
+        }
 
         const forme = port === "parasol" ? parForme[3] : port === "cone" ? parForme[2] : port === "etale" ? parForme[1] : parForme[r3 < 0.55 ? 0 : 1];
         q.setFromAxisAngle(axeY, r1 * Math.PI * 2);
         // Houppier déporté du côté où penche le fût ; port étalé : un peu irrégulier (axes inégaux).
         const dep = Math.sin(penche) * cy;
         const pos = new THREE.Vector3(x - Math.sin(r1 * 6.28) * dep, y0 + cy, z + Math.cos(r1 * 6.28) * dep);
-        const sx = port === "etale" ? rayon * (0.9 + r2 * 0.2) : rayon, sz = port === "etale" ? rayon * (1.1 - r2 * 0.2) : rayon;
+        const irr = port === "etale" ? 0.2 : port === "parasol" ? 0.12 : 0;
+        const sx = rayon * (1 - irr / 2 + r2 * irr), sz = rayon * (1 + irr / 2 - r2 * irr);
         forme.items.push(new THREE.Matrix4().compose(pos, q.clone(), new THREE.Vector3(sx, sy, sz)));
         const teintes = port === "rond" ? VERTS : VERTS_PINS;
         forme.couleurs.push(new THREE.Color(teintes[Math.floor(r2 * teintes.length)]));
       });
+      troncs.count = nTroncs;
       troncs.instanceMatrix.needsUpdate = true;
       // La caméra est la matrice de MapLibre : le tri par champ de vision de
       // three.js se trompe, on le désactive (quelques centaines d'arbres).

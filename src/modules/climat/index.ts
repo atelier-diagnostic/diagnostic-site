@@ -5,6 +5,7 @@ import type { DiagnosticModule, ExportBlock, SiteContext } from "../../core/type
 import { fetchClimatModule, type ClimatModuleRaw } from "./fetch";
 import { computeClimat, computeProjectionHorizon, type ClimatResult } from "./compute";
 import { renderClimat } from "./render";
+import { koppen, traits, zoneRE2020 } from "./caractere";
 import { tempPrecipConfig, rayonnementConfig, projectionsConfig } from "./charts";
 
 export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
@@ -31,6 +32,9 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
   },
 
   toExport(result: ClimatResult): ExportBlock {
+    const k = koppen(result.monthly.tMean, result.monthly.precip, result.site.lat);
+    const t = traits(result.monthly, result.site.lat);
+    const z = zoneRE2020(result.site.insee, result.site.altitude ?? null);
     const projectionNotes = result.projections.map((p) => {
       const pct = (v: number | null) => (v === null ? "n.d." : `${v > 0 ? "+" : ""}${v} %`);
       return (
@@ -46,6 +50,7 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
       moduleId: "climat",
       title: "Climat",
       summary:
+        `Climat ${k.nom.toLowerCase()} (${k.code} selon Köppen-Geiger). ` +
         `Température moyenne annuelle de ${result.tMoyenneAnnuelle} °C, ` +
         `${result.nuitsTropicales} nuits tropicales et ${result.joursChaleur30} jours ` +
         `≥ 30 °C par an en moyenne (normales 1991-2020).` +
@@ -53,6 +58,17 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
           ? ` Projection à l'horizon 2050 : ${result.projections[result.projections.length - 1].indicators.tMoyenneAnnuelle} °C en moyenne annuelle.`
           : ""),
       indicators: [
+        { label: "Climat (Köppen-Geiger)", value: `${k.code} — ${k.nom}` },
+        ...result.projections.map((p) => {
+          const k2 = koppen(result.monthly.tMean.map((v, i) => v + (p.deltaTMois[i] ?? 0)), result.monthly.precip, result.site.lat);
+          return { label: `Köppen-Geiger — ${p.label} (températures projetées)`, value: k2.code === k.code ? `${k2.code} (inchangé)` : `${k2.code} — ${k2.nom}` };
+        }),
+        { label: "Amplitude thermique annuelle", value: `${t.amplitude} °C (${t.lectureContinentalite})` },
+        { label: "Mois secs (Gaussen, P < 2T)", value: `${t.moisSecs.length}` },
+        { label: "Pluie annuelle · bilan P − ETP", value: `${t.pluieAnnuelle} mm · ${t.bilan} mm (été ${t.bilanEte} mm)` },
+        { label: "Jours de gel / an", value: `${result.joursGel}` },
+        { label: "Rayonnement global annuel", value: `${t.rayonnementKwh} kWh/m²` },
+        ...(z ? [{ label: "Zone climatique RE2020", value: `${z.zone}${z.altitude ? ` (altitude ${z.altitude})` : ""}` }] : []),
         { label: "Temp. moyenne annuelle", value: `${result.tMoyenneAnnuelle} °C` },
         { label: "DJU chauffage (base 18)", value: `${result.djuChauffage}` },
         { label: "DJU climatisation (base 18)", value: `${result.djuClim}` },
@@ -65,7 +81,7 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
         })),
       ],
       charts: [
-        { title: "Températures et précipitations", config: tempPrecipConfig(result) },
+        { title: "Diagramme ombrothermique (P = 2T)", config: tempPrecipConfig(result) },
         { title: "Rayonnement solaire mensuel", config: rayonnementConfig(result) },
         ...(result.projections.length > 0
           ? [
@@ -77,6 +93,9 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
           : []),
       ],
       notes: [
+        "Köppen-Geiger calculé sur les normales du site (critères de Peel et al. 2007 : mois le plus froid à 0 °C, été d'avril à septembre) ; " +
+          "glissement aux horizons futurs avec les températures projetées mois par mois, pluies supposées inchangées (l'API ne fournit pas les pluies futures).",
+        "Mois secs au sens de Gaussen (P < 2T) ; continentalité de Gorczyński ; bilan hydrique P − ETP (ETP de référence FAO-56).",
         "Référence : Open-Meteo (réanalyse ERA5), période 1991-2020.",
         "DJU base 18 °C ; vague de chaleur simplifiée (≥ 3 j consécutifs Tmax ≥ 30 °C).",
         "Projections : Open-Meteo Climate API (CMIP6), moyenne d'un ensemble simplifié " +

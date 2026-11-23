@@ -198,7 +198,8 @@ moveBar.innerHTML = `
   <span class="move-bar-text">Point déplacé</span>
   <button type="button" class="move-bar-go">Analyser ce point</button>
   <button type="button" class="move-bar-cancel">Annuler</button>`;
-mapContainer.parentElement!.appendChild(moveBar);
+// Dans la barre de recherche, à droite du bouton « Analyser » : on voit la carte en entier pendant le déplacement.
+form.appendChild(moveBar);
 let pendingPoint: { lat: number; lon: number } | null = null;
 
 function hideMoveBar(): void {

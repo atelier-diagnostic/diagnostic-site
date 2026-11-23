@@ -476,14 +476,15 @@ button { font: inherit; }
 }
 
 /* --- Barre « Analyser ce point » (repère déplacé) ------------------------- */
+/* Dans la barre de recherche, à droite du bouton « Analyser ». */
 .move-bar {
-  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 1000;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
-  max-width: calc(100% - 24px); padding: 8px 10px; border-radius: 14px;
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
-  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
-  box-shadow: 0 0 0 1px var(--border), var(--shadow-pop); font-size: 13px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  height: 44px; padding: 0 6px 0 10px; border-radius: var(--radius-m);
+  background: var(--panel); box-shadow: 0 0 0 1px var(--border), var(--shadow-pop); font-size: 13px;
+  animation: move-bar-in 0.18s ease-out;
 }
+@keyframes move-bar-in { from { opacity: 0; transform: translateX(-6px); } }
+@media (max-width: 900px) { .move-bar { height: auto; padding: 6px 6px 6px 10px; } }
 .move-bar[hidden] { display: none; }
 .move-bar-text { color: var(--muted); padding: 0 4px; }
 .move-bar button { font-weight: 600; padding: 7px 12px; border-radius: var(--radius-s); cursor: pointer; }

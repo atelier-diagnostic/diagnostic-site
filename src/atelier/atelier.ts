@@ -703,7 +703,9 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLayoutProperty("arbres-3d", "visibility", "none");
       map.addLayer(coucheCanopee3D, "carroyage");
       map.setLayoutProperty("canopee-3d", "visibility", "none");
-      map.addLayer(coucheBati3D, "carroyage");
+      // Avant les arbres et la canopée : semi-transparents, ils n'écrivent pas la
+      // profondeur ; dessinés avant eux, les bâtiments masquaient les arbres situés devant.
+      map.addLayer(coucheBati3D, "arbres-3d");
       map.setLayoutProperty("bati-lidar-3d", "visibility", "none");
       map.addLayer(coucheCourse, "carroyage");
       map.setLayoutProperty("course-3d", "visibility", "none");
@@ -729,7 +731,8 @@ export function createAtelier(root: HTMLElement): Atelier {
   map.on("webglcontextrestored", () => {
     for (const [id, c] of [["arbres-3d", coucheArbres], ["canopee-3d", coucheCanopee3D], ["bati-lidar-3d", coucheBati3D], ["course-3d", coucheCourse], ["coupe-3d", coucheCoupe3D]] as const) {
       if (map.getLayer(id)) map.removeLayer(id);
-      map.addLayer(c, map.getLayer("carroyage") ? "carroyage" : undefined);
+      const avant = id === "bati-lidar-3d" && map.getLayer("arbres-3d") ? "arbres-3d" : map.getLayer("carroyage") ? "carroyage" : undefined;
+      map.addLayer(c, avant);
     }
     majCoupe3D(true);
     appliquer("bati");

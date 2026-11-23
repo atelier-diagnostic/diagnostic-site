@@ -254,6 +254,30 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
       }
       return n ? t / n : bats[k].hRepli;
     };
+    // Contours en mètres locaux : les sommets du bord sont recalés sur le
+    // contour BD TOPO (retours du 23/11 : façades en biais en escalier).
+    const contours = bats.map((b) => b.ring.map(([lo, la]) => [(lo - lon0) * mLon, -(la - lat0) * mLat] as [number, number]));
+    const auBord = (ci: number, cj: number, k: number) => {
+      for (const [i, j] of [[ci - 1, cj - 1], [ci, cj - 1], [ci - 1, cj], [ci, cj]])
+        if (i < 0 || j < 0 || i >= W || j >= H || idg[j * W + i] !== k) return true;
+      return false;
+    };
+    const recaler = (x: number, z: number, k: number): [number, number] => {
+      const r = contours[k];
+      let bx = x, bz = z, bd = Infinity;
+      for (let a = 0; a < r.length; a++) {
+        const [x1, z1] = r[a], [x2, z2] = r[(a + 1) % r.length];
+        const dx = x2 - x1, dz = z2 - z1, l2 = dx * dx + dz * dz;
+        const t = l2 ? Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / l2)) : 0;
+        const px = x1 + t * dx, pz = z1 + t * dz, d = (px - x) ** 2 + (pz - z) ** 2;
+        if (d < bd) {
+          bd = d;
+          bx = px;
+          bz = pz;
+        }
+      }
+      return [bx, bz];
+    };
     const sommet = (ci: number, cj: number, k: number): number => {
       const c = cj * (W + 1) + ci;
       if (vProp[c] === k) return vIdx[c];
@@ -263,7 +287,8 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
         if (v !== undefined) return v;
       }
       const v = pos.length / 3;
-      pos.push(xCol[ci], solToit[k] + hauteurCoin(ci, cj, k), zRow[cj]);
+      const [x, z] = auBord(ci, cj, k) ? recaler(xCol[ci], zRow[cj], k) : [xCol[ci], zRow[cj]];
+      pos.push(x, solToit[k] + hauteurCoin(ci, cj, k), z);
       const co = couleurs[k];
       col.push(co.r, co.g, co.b);
       if (vProp[c] === -1) {
@@ -274,7 +299,11 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
     };
     const ombreMur = 0.86;
     const mur = (ci0: number, cj0: number, ci1: number, cj1: number, k: number, m: number) => {
-      const ha = pos[sommet(ci0, cj0, k) * 3 + 1], hb = pos[sommet(ci1, cj1, k) * 3 + 1];
+      const sa = sommet(ci0, cj0, k), sb = sommet(ci1, cj1, k);
+      const ha = pos[sa * 3 + 1], hb = pos[sb * 3 + 1];
+      const xa = pos[sa * 3], za = pos[sa * 3 + 2], xb = pos[sb * 3], zb = pos[sb * 3 + 2];
+      // Segment réduit à un point par le recalage (marche d'escalier absorbée) : pas de mur.
+      if ((xa - xb) ** 2 + (za - zb) ** 2 < 1e-4) return;
       let ba: number, bb: number;
       if (m < 0) ba = bb = solPied[k];
       else {
@@ -285,7 +314,7 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
       ba = Math.min(ba, ha);
       bb = Math.min(bb, hb);
       const v = pos.length / 3;
-      pos.push(xCol[ci0], ba, zRow[cj0], xCol[ci1], bb, zRow[cj1], xCol[ci1], hb, zRow[cj1], xCol[ci0], ha, zRow[cj0]);
+      pos.push(xa, ba, za, xb, bb, zb, xb, hb, zb, xa, ha, za);
       const co = couleurs[k];
       for (let n = 0; n < 4; n++) col.push(co.r * ombreMur, co.g * ombreMur, co.b * ombreMur);
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);

@@ -38,6 +38,8 @@ import { creerCoucheArbres3D, MAX_ARBRES } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
 import { creerCoucheCoupe3D } from "./coupe3d";
 import { creerCoucheCanopee3D } from "./canopee3d";
+import { creerCoucheBati3D } from "./bati3d";
+import { grilleSursol } from "../core/sursol-lidar";
 import { analyserCanopee, CLASSES_HAUTEUR, type CanopeeLidar } from "../core/canopee-lidar";
 import { calculerProfil, dessinerProfil, vuAuDela, penteEn, profilCsv, distanceM, COULEURS_ECRAN, COULEURS_EXPORT, EXAGERATIONS_COUPE, type Profil, type ExagCoupe } from "./coupe";
 import { FOCALES, FOCALE_DEFAUT, champVertical, lireVues, ecrireVues, vuesDeDepart, exporterVues, lireExport, type Vue } from "./vues";
@@ -158,6 +160,13 @@ export function createAtelier(root: HTMLElement): Atelier {
   let fond: Fond = "plan";
   let coloration: Coloration = "hauteur";
   let mode3d = false;
+  /** Volumes du bâti en 3D : extrudés (hauteur BD TOPO, toit plat) ou mesurés (LiDAR HD : toits, pentes, décrochés). */
+  let batiRendu: "extrude" | "lidar" = "extrude";
+  try {
+    if (localStorage.getItem("atelier:bati-rendu") === "lidar") batiRendu = "lidar";
+  } catch {
+    /* rien */
+  }
   let rendu: "volume" | "canopee" | "point" = "volume";
   /** Facteur appliqué au diamètre des houppiers (réglage à l'œil, retenu). */
   let envergure = 1;
@@ -198,6 +207,8 @@ export function createAtelier(root: HTMLElement): Atelier {
   };
   /** Bâtiments chargés (pour les coupes). */
   let dernierBati: GeoJSON.FeatureCollection | null = null;
+  /** Bâtiments du site (pour les volumes LiDAR). */
+  let dernierBatiData: BuildingsResult | null = null;
   /** Fond composé posé sur la photo aérienne (le fond opaque IGN s'efface). */
   let photoDessous = false;
   /** Réglages propres à la photo aérienne (0-1) : opacité sous le composé, couleurs, éclaircissement. */
@@ -281,8 +292,13 @@ export function createAtelier(root: HTMLElement): Atelier {
               <button type="button" data-colo="usage" aria-pressed="false">Usage</button>
               <button type="button" disabled title="L'année de construction n'est pas publiée dans la BD TOPO">Époque</button>
             </div>
+            <div class="segmented seg-sm" role="group" aria-label="Volumes du bâti en 3D" title="En vue 3D : volumes extrudés à la hauteur BD TOPO (toit plat), ou volumes mesurés par le LiDAR HD (toits en pente, décrochés, édicules)">
+              <button type="button" data-bati-rendu="extrude" aria-pressed="${batiRendu === "extrude"}">Extrudés</button>
+              <button type="button" data-bati-rendu="lidar" aria-pressed="${batiRendu === "lidar"}">Mesurés LiDAR</button>
+            </div>
             <div class="at-legende" data-legende-bati></div>
-            <p class="at-note" data-bati-source></p>`
+            <p class="at-note" data-bati-source></p>
+            <p class="at-note" data-bati-lidar hidden></p>`
           : c.id === "ensoleillement"
             ? `<div class="at-legende">${CLASSES_SOLEIL.map((k) => `<span><i style="background:${k.couleur}"></i>${k.label}</span>`).join("")}</div>`
             : "";
@@ -677,6 +693,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   // Arbres en volume (three.js), sous le carroyage et le périmètre.
   const coucheArbres = creerCoucheArbres3D("arbres-3d");
   const coucheCanopee3D = creerCoucheCanopee3D("canopee-3d");
+  const coucheBati3D = creerCoucheBati3D("bati-lidar-3d");
   const coucheCourse = creerCoucheCourseSoleil("course-3d");
   coucheCourse.setPlan(true); // l'atelier s'ouvre en 2D
   const coucheCoupe3D = creerCoucheCoupe3D("coupe-3d");
@@ -686,6 +703,8 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLayoutProperty("arbres-3d", "visibility", "none");
       map.addLayer(coucheCanopee3D, "carroyage");
       map.setLayoutProperty("canopee-3d", "visibility", "none");
+      map.addLayer(coucheBati3D, "carroyage");
+      map.setLayoutProperty("bati-lidar-3d", "visibility", "none");
       map.addLayer(coucheCourse, "carroyage");
       map.setLayoutProperty("course-3d", "visibility", "none");
       map.addLayer(coucheCoupe3D, "carroyage");
@@ -708,11 +727,12 @@ export function createAtelier(root: HTMLElement): Atelier {
     perte.hidden = false;
   });
   map.on("webglcontextrestored", () => {
-    for (const [id, c] of [["arbres-3d", coucheArbres], ["canopee-3d", coucheCanopee3D], ["course-3d", coucheCourse], ["coupe-3d", coucheCoupe3D]] as const) {
+    for (const [id, c] of [["arbres-3d", coucheArbres], ["canopee-3d", coucheCanopee3D], ["bati-lidar-3d", coucheBati3D], ["course-3d", coucheCourse], ["coupe-3d", coucheCoupe3D]] as const) {
       if (map.getLayer(id)) map.removeLayer(id);
       map.addLayer(c, map.getLayer("carroyage") ? "carroyage" : undefined);
     }
     majCoupe3D(true);
+    appliquer("bati");
     appliquer("arbres");
     appliquer("course");
     perte.hidden = true;
@@ -724,7 +744,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   function couchesMap(id: string): string[] {
     if (id === "fond") return [];
     if (id === "cadastre") return ["cadastre", "cadastre-numeros"];
-    if (id === "bati") return ["bati-2d", "bati-3d"];
+    if (id === "bati") return ["bati-2d", "bati-3d", "bati-lidar-3d"];
     if (id === "arbres") return ["arbres", "arbres-3d", "canopee-3d"];
     if (id === "repere") return [];
     if (id === "course") return ["course-3d"];
@@ -766,7 +786,8 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (!layer) continue;
       let visible = e.actif;
       if (lid === "bati-2d") visible = e.actif && !mode3d;
-      if (lid === "bati-3d") visible = e.actif && mode3d;
+      if (lid === "bati-3d") visible = e.actif && mode3d && batiRendu === "extrude";
+      if (lid === "bati-lidar-3d") visible = e.actif && mode3d && batiRendu === "lidar";
       // Arbres en volume dans les deux vues (vus en plan en 2D), ou en points.
       if (lid === "arbres") visible = e.actif && rendu === "point";
       if (lid === "arbres-3d") visible = e.actif && rendu === "volume";
@@ -781,12 +802,14 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (prop && !net) map.setPaintProperty(lid, prop, aplatLeger ? e.opacite * 0.3 : e.opacite);
       if (lid === "arbres-3d") coucheArbres.setOpacite(e.opacite);
       if (lid === "canopee-3d") coucheCanopee3D.setOpacite(e.opacite);
+      if (lid === "bati-lidar-3d") coucheBati3D.setOpacite(e.opacite);
       if (lid === "course-3d") coucheCourse.setOpacite(e.opacite);
       if (lid === "arbres") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
       if (lid === "courbes-cotes") map.setPaintProperty(lid, "text-opacity", e.opacite);
       if (lid === "equipements") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
       if (lid === "cadastre-numeros") map.setPaintProperty(lid, "text-opacity", e.opacite);
     }
+    if (id === "bati" && e.actif && mode3d && batiRendu === "lidar") void chargerBatiLidar();
     if (id === "relief") {
       texteRelief = "";
       majTerrain();
@@ -861,6 +884,73 @@ export function createAtelier(root: HTMLElement): Atelier {
       ["step", ["get", "h"], HAUTEURS[0].color, ...HAUTEURS.slice(0, -1).flatMap((c, i) => [c.max, HAUTEURS[i + 1].color])],
     ] as maplibregl.ExpressionSpecification;
   }
+  /** Couleur de chaque bâtiment, mêmes règles que couleurBati(), pour les volumes LiDAR. */
+  function couleursBatiLidar(data: BuildingsResult): number[] {
+    const hex = (c: string) => parseInt(c.slice(1), 16);
+    return data.buildings.map((b) => {
+      if (coloration === "neutre") return hex(NEUTRE);
+      if (coloration === "usage") return hex(USAGES.find((u) => u.valeur === (b.info?.usage ?? ""))?.color ?? USAGE_AUTRE);
+      if (b.heightM === null) return hex(INCONNU);
+      return hex((HAUTEURS.find((h) => b.heightM! < h.max) ?? HAUTEURS[HAUTEURS.length - 1]).color);
+    });
+  }
+
+  // --- Bâti en volumes mesurés (LiDAR HD) --------------------------------------------
+  let batiLidarPour: BuildingsResult | null = null;
+  function texteBatiLidar(t: string): void {
+    const p = q<HTMLElement>("[data-bati-lidar]");
+    p.hidden = !t;
+    p.textContent = t;
+  }
+  async function chargerBatiLidar(): Promise<void> {
+    if (!site || !dernierBatiData || batiLidarPour === dernierBatiData) return;
+    const ctx = site, data = dernierBatiData;
+    batiLidarPour = data;
+    texteBatiLidar("Lecture du LiDAR HD pour les volumes…");
+    try {
+      const g = await grilleSursol(ctx.lat, ctx.lon, ctx.radiusM ?? 150, (f, t) => texteBatiLidar(`Lecture du LiDAR HD pour les volumes : ${f} / ${t} tuiles…`));
+      if (site !== ctx || dernierBatiData !== data) return;
+      const couleurs = couleursBatiLidar(data);
+      const bilan = coucheBati3D.setBati(
+        g,
+        data.buildings.map((b, k) => ({ ring: b.polygon.map((p) => [p.lon, p.lat] as [number, number]), hRepli: b.heightM ?? DEFAULT_HEIGHT_M, couleur: couleurs[k] })),
+        ctx.lat,
+        ctx.lon,
+      );
+      const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+      texteBatiLidar(
+        bilan.mesures === 0
+          ? "LiDAR HD pas encore publié ici : volumes extrudés à la hauteur BD TOPO, toit plat."
+          : `Volumes mesurés par le LiDAR HD (maille de ${fr(bilan.pixelM)} m) pour ${bilan.mesures} bâtiments sur ${bilan.batiments}` +
+              (bilan.mesures < bilan.batiments ? " ; les autres, peu couverts, extrudés à leur hauteur BD TOPO (toit plat)." : ".") +
+              " Végétation qui surplombe un toit comptée dans sa hauteur." +
+              (g.couverture < 1 ? ` ${Math.round((1 - g.couverture) * 100)} % des tuiles LiDAR refusées par l'IGN : réactiver le bâti pour compléter.` : ""),
+      );
+    } catch {
+      if (dernierBatiData !== data) return;
+      batiLidarPour = null;
+      texteBatiLidar("LiDAR HD indisponible (service de l'IGN muet ou pas encore publié ici) : volumes extrudés BD TOPO.");
+      batiRendu = "extrude";
+      root.querySelectorAll("[data-bati-rendu]").forEach((x) => x.setAttribute("aria-pressed", String(x.getAttribute("data-bati-rendu") === batiRendu)));
+      appliquer("bati");
+    }
+  }
+  root.querySelectorAll<HTMLButtonElement>("[data-bati-rendu]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      batiRendu = b.dataset.batiRendu as typeof batiRendu;
+      root.querySelectorAll("[data-bati-rendu]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      try {
+        localStorage.setItem("atelier:bati-rendu", batiRendu);
+      } catch {
+        /* rien */
+      }
+      await pret;
+      if (batiRendu === "extrude") texteBatiLidar("");
+      else if (!mode3d) texteBatiLidar("Volumes mesurés visibles en vue 3D.");
+      appliquer("bati");
+    }),
+  );
+
   function legendeBati(): string {
     const pastille = (color: string, label: string) => `<span><i style="background:${color}"></i>${esc(label)}</span>`;
     if (coloration === "neutre") return "";
@@ -871,6 +961,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (etat.get("ombres")!.actif && dernierSoleil) eclairer(dernierSoleil);
     map.setPaintProperty("bati-2d", "fill-color", couleurBati());
     map.setPaintProperty("bati-3d", "fill-extrusion-color", couleurBati());
+    if (dernierBatiData) coucheBati3D.setCouleurs(couleursBatiLidar(dernierBatiData));
     q<HTMLElement>("[data-legende-bati]").innerHTML = legendeBati();
     root.querySelectorAll<HTMLButtonElement>("[data-cosia]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -1331,6 +1422,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       cleSol = "";
       coucheArbres.setSol(null);
       coucheCanopee3D.setSol(null);
+      coucheBati3D.setSol(null);
       coucheCourse.setAltitude(0);
       return;
     }
@@ -1344,6 +1436,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       cleSol = cle;
       coucheArbres.setSol(alt);
       coucheCanopee3D.setSol(alt);
+      coucheBati3D.setSol(alt);
       coucheCourse.setAltitude(alt(site.lon, site.lat) ?? 0);
     }, 300);
   }
@@ -1924,6 +2017,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLight({ anchor: "viewport", position: [1.15, 210, 30], color: "#ffffff", intensity: 0.5 });
       coucheArbres.setSoleil(null);
       coucheCanopee3D.setSoleil(null);
+      coucheBati3D.setSoleil(null);
       return;
     }
     const neutre = coloration === "neutre";
@@ -1932,6 +2026,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       map.setLight({ anchor: "map", position: [1.5, sun.azimuthDeg, 80], color: neutre ? "#8a93b8" : "#ffffff", intensity: neutre ? 0.45 : 0.3 });
       coucheArbres.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
       coucheCanopee3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
+      coucheBati3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
       return;
     }
     const t = Math.min(1, el / 45); // 0 : soleil rasant, 1 : soleil haut
@@ -1947,6 +2042,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     });
     coucheArbres.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });
     coucheCanopee3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });
+    coucheBati3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });
   }
 
   function demanderOmbres(): void {
@@ -2075,6 +2171,8 @@ export function createAtelier(root: HTMLElement): Atelier {
         const data = await fetchBuildingsWithHeight(ctx, r);
         if (site !== ctx) return;
         dernierBati = batiGeoJSON(data);
+        dernierBatiData = data;
+        if (etat.get("bati")!.actif && mode3d && batiRendu === "lidar") void chargerBatiLidar();
         (map.getSource("bati") as maplibregl.GeoJSONSource).setData(dernierBati);
         if (profil) void tracerCoupe();
         const connues = data.buildings.filter((b) => b.heightM !== null).length;

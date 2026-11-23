@@ -104,7 +104,10 @@ function segmenterPans(
   let nbPans = 0;
   const TOL_H = 0.35;
   const COS_MAX = Math.cos((12 * Math.PI) / 180);
-  const minCellules = Math.max(3, Math.round(2.5 / (pixelM * pixelM)));
+  const minCellules = Math.max(3, Math.round(4 / (pixelM * pixelM)));
+  /** Écart quadratique moyen toléré quand on fusionne deux pans (bruit du LiDAR sur des tuiles). */
+  const RMS_FUSION = 0.18;
+  const COS_FUSION = Math.cos((10 * Math.PI) / 180);
   const TAN_PLAT = Math.tan((4 * Math.PI) / 180), TAN_MUR = Math.tan((65 * Math.PI) / 180);
 
   /** Plan par moindres carrés (centré) sur une liste de pixels. */
@@ -224,6 +227,93 @@ function segmenterPans(
     if (orphelins.length) {
       const r = membres.findIndex((_, n) => !petit(debut + n));
       for (const c of orphelins) idr[c] = r >= 0 ? debut + r : debut;
+    }
+    // 3 bis. Fusion des pans voisins qui tiennent dans un même plan (moments
+    // cumulés : le plan de l'union se calcule sans repasser sur les pixels).
+    // Retours du 23/11 : toits de tuiles découpés en gradins.
+    type Mom = { n: number; x: number; z: number; h: number; xx: number; xz: number; zz: number; xh: number; zh: number; hh: number };
+    const ox = xc(cs[0]), oz = zc(cs[0]);
+    const mom = new Map<number, Mom>();
+    for (const c of cs) {
+      const r = idr[c];
+      let m = mom.get(r);
+      if (!m) mom.set(r, (m = { n: 0, x: 0, z: 0, h: 0, xx: 0, xz: 0, zz: 0, xh: 0, zh: 0, hh: 0 }));
+      const x = xc(c) - ox, z = zc(c) - oz, h = hc[c];
+      m.n++; m.x += x; m.z += z; m.h += h; m.xx += x * x; m.xz += x * z; m.zz += z * z; m.xh += x * h; m.zh += z * h; m.hh += h * h;
+    }
+    const plan = (m: Mom) => {
+      const mx = m.x / m.n, mz = m.z / m.n, mh = m.h / m.n;
+      const cxx = m.xx / m.n - mx * mx, cxz = m.xz / m.n - mx * mz, czz = m.zz / m.n - mz * mz;
+      const cxh = m.xh / m.n - mx * mh, czh = m.zh / m.n - mz * mh, chh = m.hh / m.n - mh * mh;
+      const det = cxx * czz - cxz * cxz;
+      let a = 0, b = 0;
+      if (m.n >= 4 && det > 1e-9) {
+        a = (cxh * czz - czh * cxz) / det;
+        b = (czh * cxx - cxh * cxz) / det;
+      }
+      return { a, b, rms: Math.sqrt(Math.max(0, chh - a * cxh - b * czh)) };
+    };
+    const somme = (p: Mom, q: Mom): Mom => ({ n: p.n + q.n, x: p.x + q.x, z: p.z + q.z, h: p.h + q.h, xx: p.xx + q.xx, xz: p.xz + q.xz, zz: p.zz + q.zz, xh: p.xh + q.xh, zh: p.zh + q.zh, hh: p.hh + q.hh });
+    for (let tour = 0; tour < 30; tour++) {
+      const paires = new Set<number>();
+      for (const c of cs) {
+        const i = c % W;
+        for (const cc of [i + 1 < W ? c + 1 : -1, c + W < W * H ? c + W : -1]) {
+          if (cc < 0 || idg[cc] !== k || idr[cc] === idr[c]) continue;
+          const r1 = Math.min(idr[c], idr[cc]), r2 = Math.max(idr[c], idr[cc]);
+          paires.add(r1 * 1_000_000 + r2);
+        }
+      }
+      const candidats: [number, number, number][] = [];
+      for (const cle of paires) {
+        const r1 = Math.floor(cle / 1_000_000), r2 = cle % 1_000_000;
+        const m1 = mom.get(r1)!, m2 = mom.get(r2)!;
+        const p1 = plan(m1), p2 = plan(m2);
+        if (cosNormales(p1.a, p1.b, p2.a, p2.b) < COS_FUSION) continue;
+        const u = plan(somme(m1, m2));
+        if (u.rms < RMS_FUSION) candidats.push([u.rms, r1, r2]);
+      }
+      if (!candidats.length) break;
+      candidats.sort((p, q) => p[0] - q[0]);
+      const pris = new Set<number>();
+      const vers = new Map<number, number>();
+      for (const [, r1, r2] of candidats) {
+        if (pris.has(r1) || pris.has(r2)) continue;
+        pris.add(r1);
+        pris.add(r2);
+        vers.set(r2, r1);
+        mom.set(r1, somme(mom.get(r1)!, mom.get(r2)!));
+        mom.delete(r2);
+      }
+      for (const c of cs) {
+        const r = vers.get(idr[c]);
+        if (r !== undefined) idr[c] = r;
+      }
+    }
+    // 3 ter. Limites des pans régularisées : un pixel entouré (5 voisins sur 8 au
+    // moins) d'un autre pan qui l'explique aussi bien rejoint ce pan.
+    for (let passe = 0; passe < 2; passe++) {
+      const change: [number, number][] = [];
+      for (const c of cs) {
+        const i = c % W, j = (c - i) / W;
+        const compte = new Map<number, number>();
+        for (let dj = -1; dj <= 1; dj++)
+          for (let di = -1; di <= 1; di++) {
+            if (!di && !dj) continue;
+            const ii = i + di, jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+            const cc = jj * W + ii;
+            if (idg[cc] === k && idr[cc] !== idr[c]) compte.set(idr[cc], (compte.get(idr[cc]) ?? 0) + 1);
+          }
+        for (const [r, n] of compte)
+          if (n >= 5) {
+            const m = mom.get(r)!, p = plan(m);
+            const hx = m.h / m.n + p.a * (xc(c) - ox - m.x / m.n) + p.b * (zc(c) - oz - m.z / m.n);
+            if (Math.abs(hc[c] - hx) < 0.5) change.push([c, r]);
+            break;
+          }
+      }
+      for (const [c, r] of change) idr[c] = r;
     }
     // 4. Plans finaux.
     const finaux = new Map<number, number[]>();

@@ -16,7 +16,21 @@ import type { ArbreOsm } from "../modules/soleil/fetch";
 const VERTS = [0x2d6b28, 0x3a7a30, 0x4a8a38, 0x1d5620, 0x557f34];
 /** Verts des pins : plus sombres et plus bleutés. */
 const VERTS_PINS = [0x2c5a33, 0x335f2e, 0x284f2c, 0x3b6a3a];
-const MAX_ARBRES = 1500;
+/**
+ * Plafond de volumes dessinés. Les arbres LiDAR arrivent dans l'ordre de
+ * lecture du raster (nord → sud) : au-delà du plafond, on garde les plus
+ * proches du centre, jamais « les premiers de la liste » (sinon tout le sud
+ * du cercle disparaît alors que ses ombres restent affichées).
+ */
+export const MAX_ARBRES = 12000;
+
+/** Arbres à dessiner : tous sous le plafond, sinon les plus proches du centre. */
+export function arbresADessiner(arbres: ArbreOsm[], lat0: number, lon0: number): ArbreOsm[] {
+  if (arbres.length <= MAX_ARBRES) return arbres;
+  const kLon = Math.cos((lat0 * Math.PI) / 180);
+  const d2 = (a: ArbreOsm) => ((a.lon - lon0) * kLon) ** 2 + (a.lat - lat0) ** 2;
+  return [...arbres].sort((a, b) => d2(a) - d2(b)).slice(0, MAX_ARBRES);
+}
 
 /** Pseudo-aléa stable dans [0, 1[, tiré des coordonnées. */
 function alea(lat: number, lon: number, graine: number): number {
@@ -186,7 +200,7 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
       echelle = origine.meterInMercatorCoordinateUnits();
       const mLat = 110_540;
       const mLon = 111_320 * Math.cos((lat0 * Math.PI) / 180);
-      const liste = arbres.slice(0, MAX_ARBRES);
+      const liste = arbresADessiner(arbres, lat0, lon0);
 
       // Fût, plus les charpentières des pins (trois pour le parasol, deux pour le pin d'Alep).
       const troncs = new THREE.InstancedMesh(geoTronc, matTronc, liste.length * 4);
@@ -246,7 +260,7 @@ export function creerCoucheArbres3D(id: string): CoucheArbres3D {
       troncs.count = nTroncs;
       troncs.instanceMatrix.needsUpdate = true;
       // La caméra est la matrice de MapLibre : le tri par champ de vision de
-      // three.js se trompe, on le désactive (quelques centaines d'arbres).
+      // three.js se trompe, on le désactive (quelques milliers d'arbres instanciés).
       troncs.frustumCulled = false;
       groupe.add(troncs);
 

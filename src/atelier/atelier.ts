@@ -34,7 +34,7 @@ import { DEM_TUILES, enregistrerProtocoleRelief, type SourceAlt } from "./relief
 import { enregistrerProduit, enProduit } from "./produit";
 import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIgn, type CoucheIgn } from "./fond-ign";
 import { carroyage } from "./lambert93";
-import { creerCoucheArbres3D } from "./arbres3d";
+import { creerCoucheArbres3D, MAX_ARBRES } from "./arbres3d";
 import { ombresArbres } from "./ombres-arbres";
 import { creerCoucheCoupe3D } from "./coupe3d";
 import { creerCoucheCanopee3D } from "./canopee3d";
@@ -2084,6 +2084,8 @@ export function createAtelier(root: HTMLElement): Atelier {
         });
         arbresBruts = { arbres, lat0: ctx.lat, lon0: ctx.lon };
         poserArbres();
+        if (arbres.length > MAX_ARBRES)
+          texte += ` Volumes 3D limités aux ${MAX_ARBRES.toLocaleString("fr-FR")} arbres les plus proches du centre (ombres et canopée : tous les arbres).`;
         etatCouche(id, texte);
         if (rendu === "canopee") void chargerCanopee3D();
       } else if (id === "canopee") {

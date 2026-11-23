@@ -86,7 +86,26 @@ export function enregistrerProtocoleRelief(): void {
   maplibregl.addProtocol("ignbil", async (params) => ({
     data: await versTerrarium(await altitudesBrutes(params.url.replace(/^ignbil:\/\//, "https://"))),
   }));
+  // Terrain et ombrage de l'atelier : « ignalt://lidar/{z}/{x}/{y} » ou
+  // « ignalt://rgealti/… ». En LiDAR, MNT 50 cm complété pixel par pixel par
+  // le RGE ALTI là où il n'est pas encore publié (mêmes altitudes NGF-IGN69).
+  maplibregl.addProtocol("ignalt", async (params) => {
+    const [source, z, x, y] = params.url.replace(/^ignalt:\/\//, "").split("/");
+    const { alt, lidar } = await altitudesMixtes(Number(z), Number(x), Number(y), source as SourceAlt);
+    if (Number(z) >= 15) {
+      statsRelief.tuiles++;
+      statsRelief.lidar += lidar;
+    }
+    return { data: await versTerrarium(alt) };
+  });
 }
+
+/** Tuiles de terrain (raster-dem terrarium) pour la source choisie. */
+export const tuilesRelief = (source: SourceAlt) => `ignalt://${source}/{z}/{x}/{y}`;
+/** Zoom le plus fin demandé : ≈ 0,9 m par pixel en France au zoom 17 (LiDAR 50 cm), ≈ 1,7 m au zoom 16 (RGE ALTI 1 m). */
+export const ZOOM_MAX_RELIEF: Record<SourceAlt, number> = { lidar: 17, rgealti: 16 };
+/** Part LiDAR des tuiles fines de terrain reçues depuis la dernière remise à zéro. */
+export const statsRelief = { tuiles: 0, lidar: 0 };
 
 /** Altitudes brutes d'une tuile (256 × 256, ligne 0 au nord), mises en cache. */
 function altitudesBrutes(url: string): Promise<Float32Array> {

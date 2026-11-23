@@ -30,7 +30,7 @@ import { fetchPatrimoine } from "../core/patrimoine";
 
 const CLE_REPLIEES = "atelier:themes-replies";
 const CLE_VUES_REPLIEES = "atelier:vues-repliees";
-import { DEM_TUILES, enregistrerProtocoleRelief, type SourceAlt } from "./relief-dem";
+import { enregistrerProtocoleRelief, statsRelief, tuilesRelief, ZOOM_MAX_RELIEF, type SourceAlt } from "./relief-dem";
 import { enregistrerProduit, enProduit } from "./produit";
 import { THEMES_IGN, SPRITE_PLAN_IGN, OPACITE, chargerStylePlanIgn, type ThemeIgn, type CoucheIgn } from "./fond-ign";
 import { carroyage } from "./lambert93";
@@ -176,6 +176,8 @@ export function createAtelier(root: HTMLElement): Atelier {
   let numerosCadastre = false;
   /** Altitudes des courbes et des coupes : LiDAR HD (complété par le RGE ALTI) ou RGE ALTI seul. */
   let sourceAlt: SourceAlt = "lidar";
+  /** Dernier texte d'état de la couche Relief (source réellement lue). */
+  let texteRelief = "";
   /** Source des arbres : détectés dans le LiDAR HD, ou saisis dans OpenStreetMap. */
   let sourceArbres: "lidar" | "osm" = "lidar";
   /** Analyse LiDAR de la canopée, une par site (partagée par la canopée et les arbres). */
@@ -255,6 +257,10 @@ export function createAtelier(root: HTMLElement): Atelier {
         : c.id === "relief"
           ? `<div class="segmented seg-sm" role="group" aria-label="Exagération du relief en 3D">
               ${EXAGERATIONS.map((v) => `<button type="button" data-exag="${v}" aria-pressed="${v === exag}">×${String(v).replace(".", ",")}</button>`).join("")}
+            </div>
+            <div class="segmented seg-sm" role="group" aria-label="Source des altitudes">
+              <button type="button" data-alt="lidar" aria-pressed="${sourceAlt === "lidar"}">LiDAR HD 50 cm</button>
+              <button type="button" data-alt="rgealti" aria-pressed="${sourceAlt === "rgealti"}">RGE ALTI 1 m</button>
             </div>`
         : c.id === "courbes"
           ? `<div class="segmented seg-sm" role="group" aria-label="Équidistance des courbes">
@@ -478,8 +484,9 @@ export function createAtelier(root: HTMLElement): Atelier {
         // zoom 14, plus doux : au mètre près, il dessine chaque talus et chaque mur.
         // Parcellaire Express en tuiles vectorielles (traits fins, numéros à la demande).
         pci: { type: "vector", tiles: ["https://data.geopf.fr/tms/1.0.0/PCI/{z}/{x}/{y}.pbf"], minzoom: 5, maxzoom: 19, attribution: "© IGN Parcellaire Express" },
-        dem: { type: "raster-dem", tiles: [DEM_TUILES], tileSize: 256, encoding: "terrarium", maxzoom: 15, attribution: "© IGN RGE ALTI®" },
-        "dem-ombrage": { type: "raster-dem", tiles: [DEM_TUILES], tileSize: 256, encoding: "terrarium", maxzoom: 14 },
+        // Zoom maximal fixé à celui du LiDAR (une source ne change pas de maxzoom) ; en RGE ALTI, quelques tuiles de plus.
+        dem: { type: "raster-dem", tiles: [tuilesRelief(sourceAlt)], tileSize: 256, encoding: "terrarium", maxzoom: ZOOM_MAX_RELIEF.lidar, attribution: "© IGN LiDAR HD, RGE ALTI®" },
+        "dem-ombrage": { type: "raster-dem", tiles: [tuilesRelief(sourceAlt)], tileSize: 256, encoding: "terrarium", maxzoom: ZOOM_MAX_RELIEF.lidar - 1 },
       },
       // Pictogrammes du Plan IGN vectoriel (fond « Composé »).
       sprite: SPRITE_PLAN_IGN,
@@ -780,7 +787,10 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (lid === "equipements") map.setPaintProperty(lid, "circle-stroke-opacity", e.opacite);
       if (lid === "cadastre-numeros") map.setPaintProperty(lid, "text-opacity", e.opacite);
     }
-    if (id === "relief") majTerrain();
+    if (id === "relief") {
+      texteRelief = "";
+      majTerrain();
+    }
     if (id === "courbes" && e.actif) void dessinerCourbes();
     if (id === "isochrones" && e.actif) void dessinerIsochrones();
     if (id === "equipements" && e.actif) void dessinerEquipements();
@@ -1337,9 +1347,27 @@ export function createAtelier(root: HTMLElement): Atelier {
       coucheCourse.setAltitude(alt(site.lon, site.lat) ?? 0);
     }, 300);
   }
+  /** Source réellement utilisée par le terrain et l'ombrage, d'après les tuiles fines reçues. */
+  function majTexteRelief(): void {
+    if (!etat.get("relief")!.actif) return;
+    const { tuiles, lidar } = statsRelief;
+    const part = tuiles ? lidar / tuiles : 0;
+    const t =
+      sourceAlt === "rgealti"
+        ? "Terrain et ombrage : RGE ALTI 1 m."
+        : !tuiles
+          ? "Terrain et ombrage : LiDAR HD 50 cm (complété par le RGE ALTI hors couverture)."
+          : part > 0.995
+            ? "Terrain et ombrage : LiDAR HD 50 cm (grille de ≈ 0,9 m au zoom le plus fin)."
+            : part > 0.005
+              ? `Terrain et ombrage : LiDAR HD sur ${Math.round(part * 100)} % de la vue, complété par le RGE ALTI 1 m.`
+              : "LiDAR HD pas encore publié ici : terrain et ombrage sur le RGE ALTI 1 m.";
+    if (t !== texteRelief) etatCouche("relief", (texteRelief = t));
+  }
   map.on("idle", () => {
     if (map.getTerrain()) poserSurSol();
     majCoupe3D();
+    majTexteRelief();
   });
   root.querySelectorAll<HTMLButtonElement>("[data-exag]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -1391,12 +1419,21 @@ export function createAtelier(root: HTMLElement): Atelier {
     }),
   );
 
-  // Source des altitudes (courbes et coupes) : deux jeux de boutons, synchronisés.
+  // Source des altitudes (terrain 3D, ombrage, courbes et coupes) : trois jeux de boutons, synchronisés.
   root.querySelectorAll<HTMLButtonElement>("[data-alt]").forEach((b) =>
     b.addEventListener("click", async () => {
+      const avant = sourceAlt;
       sourceAlt = b.dataset.alt as SourceAlt;
       root.querySelectorAll("[data-alt]").forEach((x) => x.setAttribute("aria-pressed", String(x.getAttribute("data-alt") === sourceAlt)));
       await pret;
+      if (sourceAlt !== avant) {
+        // Terrain et ombrage rechargés depuis la nouvelle source ; arbres reposés sur le nouveau sol.
+        statsRelief.tuiles = statsRelief.lidar = 0;
+        texteRelief = "";
+        for (const id of ["dem", "dem-ombrage"]) (map.getSource(id) as maplibregl.RasterDEMTileSource | undefined)?.setTiles([tuilesRelief(sourceAlt)]);
+        cleSol = "";
+        majTexteRelief();
+      }
       void dessinerCourbes();
       if (profil) void tracerCoupe();
     }),

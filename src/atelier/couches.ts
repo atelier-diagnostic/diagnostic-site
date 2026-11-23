@@ -90,10 +90,10 @@ export const COUCHES: CoucheDef[] = [
     id: "relief",
     famille: "Fond",
     titre: "Relief",
-    source: "IGN RGE ALTI®",
+    source: "IGN LiDAR HD (MNT 50 cm), complété par le RGE ALTI®",
     active: false,
     opacite: 0.4,
-    note: "En 3D, toutes les couches se posent sur le relief (exagération réglable) ; l'opacité règle l'ombrage, visible aussi en 2D. Les calculs d'ombres et d'heures de soleil au sol restent faits sur sol plat ; le relief lointain est dans le module Soleil.",
+    note: "En 3D, toutes les couches se posent sur le relief (exagération réglable) ; l'opacité règle l'ombrage, visible aussi en 2D. Altitudes du LiDAR HD là où il est publié (talus, fossés, digues lisibles), sinon du RGE ALTI ; la part LiDAR de la vue est indiquée. Les calculs d'ombres et d'heures de soleil au sol restent faits sur sol plat ; le relief lointain est dans le module Soleil.",
   },
   {
     id: "courbes",

@@ -42,10 +42,16 @@ export interface BilanBati3D {
   batiments: number;
   mesures: number;
   pixelM: number;
+  /** Pans de toit reconstruits (mode « pans plans »). */
+  pans?: number;
 }
+
+/** « brut » : le dessus suit chaque pixel du LiDAR ; « plans » : toits reconstruits en pans plans. */
+export type ModeBati3D = "brut" | "plans";
 
 export interface CoucheBati3D extends maplibregl.CustomLayerInterface {
   setBati(grille: GrilleSursol | null, batiments: BatimentPourVolume[], lat0: number, lon0: number): BilanBati3D;
+  setMode(m: ModeBati3D): BilanBati3D;
   /** Change les couleurs sans relire le LiDAR. */
   setCouleurs(couleurs: number[]): void;
   setSol(sol: ((lon: number, lat: number) => number | null) | null): void;
@@ -54,6 +60,193 @@ export interface CoucheBati3D extends maplibregl.CustomLayerInterface {
 }
 
 const versMerc = (lon: number, lat: number): [number, number] => [(lon * C) / 180, (Math.log(Math.tan(((90 + lat) * Math.PI) / 360)) * C) / Math.PI];
+
+/** Pan de toit : plan h = h + a (x − cx) + b (z − cz), en mètres locaux. */
+interface Pan {
+  k: number;
+  cx: number;
+  cz: number;
+  h: number;
+  a: number;
+  b: number;
+  hmin: number;
+  hmax: number;
+}
+
+/**
+ * Découpe le toit de chaque bâtiment en pans plans (version simplifiée de la
+ * méthode du 3D BAG, TU Delft) :
+ *  1. plan local de chaque pixel (moindres carrés sur 5 × 5 pixels du bâtiment) ;
+ *  2. croissance de régions depuis les pixels les plus plans : un voisin
+ *     rejoint le pan s'il en est à moins de 35 cm et si sa pente locale est
+ *     proche (moins de 12°) ; le plan du pan est recalculé à mesure ;
+ *  3. pans de moins de 2,5 m² dissous dans le pan voisin qui les explique le mieux ;
+ *  4. plan final de chaque pan ; pente sous 4° : toit plat ; au-delà de 65° : plat aussi
+ *     (bord ou mur mal mesuré).
+ */
+function segmenterPans(
+  W: number,
+  H: number,
+  idg: Int32Array,
+  hc: Float32Array,
+  cellules: number[][],
+  xCol: Float64Array,
+  zRow: Float64Array,
+  pixelM: number,
+): { idr: Int32Array; pans: Pan[]; nbPans: number } {
+  const xc = (c: number) => (xCol[c % W] + xCol[(c % W) + 1]) / 2;
+  const zc = (c: number) => {
+    const j = Math.floor(c / W);
+    return (zRow[j] + zRow[j + 1]) / 2;
+  };
+  const idr = new Int32Array(W * H).fill(-1);
+  const pans: Pan[] = [];
+  let nbPans = 0;
+  const TOL_H = 0.35;
+  const COS_MAX = Math.cos((12 * Math.PI) / 180);
+  const minCellules = Math.max(3, Math.round(2.5 / (pixelM * pixelM)));
+  const TAN_PLAT = Math.tan((4 * Math.PI) / 180), TAN_MUR = Math.tan((65 * Math.PI) / 180);
+
+  /** Plan par moindres carrés (centré) sur une liste de pixels. */
+  const ajuster = (cs: number[]): { cx: number; cz: number; h: number; a: number; b: number; rms: number } => {
+    let sx = 0, sz = 0, sh = 0;
+    for (const c of cs) {
+      sx += xc(c);
+      sz += zc(c);
+      sh += hc[c];
+    }
+    const n = cs.length, cx = sx / n, cz = sz / n, h = sh / n;
+    let xx = 0, xz = 0, zz = 0, xh = 0, zh = 0;
+    for (const c of cs) {
+      const dx = xc(c) - cx, dz = zc(c) - cz, dh = hc[c] - h;
+      xx += dx * dx;
+      xz += dx * dz;
+      zz += dz * dz;
+      xh += dx * dh;
+      zh += dz * dh;
+    }
+    const det = xx * zz - xz * xz;
+    let a = 0, b = 0;
+    if (n >= 4 && Math.abs(det) > 1e-9) {
+      a = (xh * zz - zh * xz) / det;
+      b = (zh * xx - xh * xz) / det;
+    }
+    let e = 0;
+    for (const c of cs) e += (hc[c] - (h + a * (xc(c) - cx) + b * (zc(c) - cz))) ** 2;
+    return { cx, cz, h, a, b, rms: Math.sqrt(e / n) };
+  };
+  const cosNormales = (a1: number, b1: number, a2: number, b2: number) =>
+    (a1 * a2 + b1 * b2 + 1) / Math.sqrt((a1 * a1 + b1 * b1 + 1) * (a2 * a2 + b2 * b2 + 1));
+
+  cellules.forEach((cs, k) => {
+    if (!cs.length) return;
+    // 1. Plans locaux.
+    const local = new Map<number, { a: number; b: number; rms: number }>();
+    for (const c of cs) {
+      const i = c % W, j = (c - i) / W;
+      const v: number[] = [];
+      for (let dj = -2; dj <= 2; dj++)
+        for (let di = -2; di <= 2; di++) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+          const cc = jj * W + ii;
+          if (idg[cc] === k) v.push(cc);
+        }
+      const p = v.length >= 6 ? ajuster(v) : { a: 0, b: 0, rms: 9 };
+      local.set(c, { a: p.a, b: p.b, rms: p.rms });
+    }
+    // 2. Croissance de régions.
+    const debut = pans.length;
+    const membres: number[][] = [];
+    const graines = [...cs].sort((p, q) => local.get(p)!.rms - local.get(q)!.rms);
+    for (const s0 of graines) {
+      if (idr[s0] !== -1) continue;
+      const r = pans.length;
+      const l0 = local.get(s0)!;
+      let plan = { cx: xc(s0), cz: zc(s0), h: hc[s0], a: l0.a, b: l0.b };
+      const m: number[] = [s0];
+      idr[s0] = r;
+      let prochainAjustement = 8;
+      for (let q = 0; q < m.length; q++) {
+        const c = m[q], i = c % W, j = (c - i) / W;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+          const cc = jj * W + ii;
+          if (idg[cc] !== k || idr[cc] !== -1) continue;
+          const lc = local.get(cc)!;
+          const ecart = Math.abs(hc[cc] - (plan.h + plan.a * (xc(cc) - plan.cx) + plan.b * (zc(cc) - plan.cz)));
+          if (ecart > TOL_H || cosNormales(lc.a, lc.b, plan.a, plan.b) < COS_MAX) continue;
+          idr[cc] = r;
+          m.push(cc);
+          if (m.length >= prochainAjustement) {
+            plan = ajuster(m);
+            prochainAjustement *= 2;
+          }
+        }
+      }
+      pans.push({ k, ...plan, hmin: 0, hmax: 0 });
+      membres.push(m);
+    }
+    // 3. Petits pans dissous dans le voisin qui les explique le mieux.
+    const petit = (r: number) => membres[r - debut].length < minCellules;
+    let orphelins: number[] = [];
+    for (let r = debut; r < pans.length; r++) if (petit(r)) for (const c of membres[r - debut]) {
+      idr[c] = -2;
+      orphelins.push(c);
+    }
+    for (let tour = 0; tour < 50 && orphelins.length; tour++) {
+      const reste: number[] = [];
+      const pris: [number, number][] = [];
+      for (const c of orphelins) {
+        const i = c % W, j = (c - i) / W;
+        let best = -1, be = Infinity;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+          const r = idr[jj * W + ii];
+          if (r < debut || idg[jj * W + ii] !== k) continue;
+          const q = pans[r];
+          const e = Math.abs(hc[c] - (q.h + q.a * (xc(c) - q.cx) + q.b * (zc(c) - q.cz)));
+          if (e < be) {
+            be = e;
+            best = r;
+          }
+        }
+        if (best >= 0) pris.push([c, best]);
+        else reste.push(c);
+      }
+      if (!pris.length) break;
+      for (const [c, r] of pris) idr[c] = r;
+      orphelins = reste;
+    }
+    // Bâtiment sans grand pan (très petit) : un seul pan.
+    if (orphelins.length) {
+      const r = membres.findIndex((_, n) => !petit(debut + n));
+      for (const c of orphelins) idr[c] = r >= 0 ? debut + r : debut;
+    }
+    // 4. Plans finaux.
+    const finaux = new Map<number, number[]>();
+    for (const c of cs) {
+      const r = idr[c];
+      if (!finaux.has(r)) finaux.set(r, []);
+      finaux.get(r)!.push(c);
+    }
+    nbPans += finaux.size;
+    for (const [r, m] of finaux) {
+      const p = ajuster(m);
+      const pente = Math.hypot(p.a, p.b);
+      let hmin = Infinity, hmax = -Infinity;
+      for (const c of m) {
+        hmin = Math.min(hmin, hc[c]);
+        hmax = Math.max(hmax, hc[c]);
+      }
+      if (pente < TAN_PLAT || pente > TAN_MUR) pans[r] = { k, cx: p.cx, cz: p.cz, h: p.h, a: 0, b: 0, hmin, hmax };
+      else pans[r] = { k, cx: p.cx, cz: p.cz, h: p.h, a: p.a, b: p.b, hmin, hmax };
+    }
+  });
+  return { idr, pans, nbPans };
+}
 
 export function creerCoucheBati3D(id: string): CoucheBati3D {
   let map: maplibregl.Map | null = null;
@@ -71,6 +264,7 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
   let origine = maplibregl.MercatorCoordinate.fromLngLat([0, 0], 0);
   let echelle = 1;
   let bilan: BilanBati3D = { batiments: 0, mesures: 0, pixelM: 0 };
+  let mode: ModeBati3D = "brut";
 
   function construire(): void {
     if (mesh) {
@@ -218,6 +412,21 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
     for (let i = 0; i <= W; i++) xCol[i] = (((g.x0 + i * px) / C) * 180 - lon0) * mLon;
     for (let j = 0; j <= H; j++) zRow[j] = -(((Math.atan(Math.exp(((g.y0 - j * px) / C) * Math.PI)) * 360) / Math.PI - 90) - lat0) * mLat;
 
+    // Unités du maillage : le bâtiment entier (LiDAR brut) ou chacun de ses pans (pans plans).
+    let idm: Int32Array = idg;
+    let batDe = (u: number) => u;
+    let hauteurPlan: ((u: number, x: number, z: number) => number) | null = null;
+    if (mode === "plans") {
+      const seg = segmenterPans(W, H, idg, hc, cellules, xCol, zRow, g.pixelM * f);
+      idm = seg.idr;
+      batDe = (u) => seg.pans[u].k;
+      hauteurPlan = (u, x, z) => {
+        const q = seg.pans[u];
+        return Math.max(q.hmin - 0.3, Math.min(q.hmax + 0.3, q.h + q.a * (x - q.cx) + q.b * (z - q.cz)));
+      };
+      bilan.pans = seg.nbPans;
+    }
+
     // Sol de chaque bâtiment : sous le centre pour le toit, le plus bas des coins pour le pied des murs.
     const solToit = new Float32Array(bats.length), solPied = new Float32Array(bats.length);
     const lireSol = sol;
@@ -239,20 +448,20 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
 
     const pos: number[] = [], col: number[] = [], idx: number[] = [];
     const couleurs = bats.map((b) => new THREE.Color(b.couleur));
-    // Sommets du toit : un par coin et par bâtiment.
+    // Sommets du toit : un par coin et par unité (bâtiment ou pan).
     const vIdx = new Int32Array((W + 1) * (H + 1)).fill(-1), vProp = new Int32Array((W + 1) * (H + 1)).fill(-1);
     const vAutres = new Map<number, number>();
-    const hauteurCoin = (ci: number, cj: number, k: number) => {
+    const hauteurCoin = (ci: number, cj: number, u: number) => {
       let t = 0, n = 0;
       for (const [i, j] of [[ci - 1, cj - 1], [ci, cj - 1], [ci - 1, cj], [ci, cj]]) {
         if (i < 0 || j < 0 || i >= W || j >= H) continue;
         const c = j * W + i;
-        if (idg[c] === k) {
+        if (idm[c] === u) {
           t += hc[c];
           n++;
         }
       }
-      return n ? t / n : bats[k].hRepli;
+      return n ? t / n : bats[batDe(u)].hRepli;
     };
     // Contours en mètres locaux : les sommets du bord sont recalés sur le
     // contour BD TOPO (retours du 23/11 : façades en biais en escalier).
@@ -278,39 +487,44 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
       }
       return [bx, bz];
     };
-    const sommet = (ci: number, cj: number, k: number): number => {
+    const sommet = (ci: number, cj: number, u: number): number => {
       const c = cj * (W + 1) + ci;
-      if (vProp[c] === k) return vIdx[c];
-      const cle = c * 1_000_000 + k;
+      if (vProp[c] === u) return vIdx[c];
+      const cle = c * 1_000_000 + u;
       if (vProp[c] !== -1) {
         const v = vAutres.get(cle);
         if (v !== undefined) return v;
       }
+      const k = batDe(u);
       const v = pos.length / 3;
       const [x, z] = auBord(ci, cj, k) ? recaler(xCol[ci], zRow[cj], k) : [xCol[ci], zRow[cj]];
-      pos.push(x, solToit[k] + hauteurCoin(ci, cj, k), z);
+      pos.push(x, solToit[k] + (hauteurPlan ? hauteurPlan(u, x, z) : hauteurCoin(ci, cj, u)), z);
       const co = couleurs[k];
       col.push(co.r, co.g, co.b);
       if (vProp[c] === -1) {
-        vProp[c] = k;
+        vProp[c] = u;
         vIdx[c] = v;
       } else vAutres.set(cle, v);
       return v;
     };
     const ombreMur = 0.86;
-    const mur = (ci0: number, cj0: number, ci1: number, cj1: number, k: number, m: number) => {
-      const sa = sommet(ci0, cj0, k), sb = sommet(ci1, cj1, k);
+    // Entre deux pans d'un même bâtiment, une marche sous 15 cm est un raccord de faîtage, pas un mur.
+    const marcheMin = mode === "plans" ? 0.15 : 0.05;
+    const mur = (ci0: number, cj0: number, ci1: number, cj1: number, u: number, m: number) => {
+      const sa = sommet(ci0, cj0, u), sb = sommet(ci1, cj1, u);
       const ha = pos[sa * 3 + 1], hb = pos[sb * 3 + 1];
       const xa = pos[sa * 3], za = pos[sa * 3 + 2], xb = pos[sb * 3], zb = pos[sb * 3 + 2];
       // Segment réduit à un point par le recalage (marche d'escalier absorbée) : pas de mur.
       if ((xa - xb) ** 2 + (za - zb) ** 2 < 1e-4) return;
+      const k = batDe(u);
       let ba: number, bb: number;
       if (m < 0) ba = bb = solPied[k];
       else {
         ba = pos[sommet(ci0, cj0, m) * 3 + 1];
         bb = pos[sommet(ci1, cj1, m) * 3 + 1];
       }
-      if (ha <= ba + 0.05 && hb <= bb + 0.05) return;
+      const seuil = m >= 0 && batDe(m) === k ? marcheMin : 0.05;
+      if (ha <= ba + seuil && hb <= bb + seuil) return;
       ba = Math.min(ba, ha);
       bb = Math.min(bb, hb);
       const v = pos.length / 3;
@@ -321,16 +535,16 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
     };
     for (let j = 0; j < H; j++)
       for (let i = 0; i < W; i++) {
-        const k = idg[j * W + i];
-        if (k < 0) continue;
-        const a = sommet(i, j, k), b = sommet(i + 1, j, k), c = sommet(i, j + 1, k), d = sommet(i + 1, j + 1, k);
+        const u = idm[j * W + i];
+        if (u < 0) continue;
+        const a = sommet(i, j, u), b = sommet(i + 1, j, u), c = sommet(i, j + 1, u), d = sommet(i + 1, j + 1, u);
         idx.push(a, c, b, b, c, d);
-        const voisin = (ii: number, jj: number) => (ii < 0 || jj < 0 || ii >= W || jj >= H ? -1 : idg[jj * W + ii]);
+        const voisin = (ii: number, jj: number) => (ii < 0 || jj < 0 || ii >= W || jj >= H ? -1 : idm[jj * W + ii]);
         const g0 = voisin(i - 1, j), g1 = voisin(i + 1, j), g2 = voisin(i, j - 1), g3 = voisin(i, j + 1);
-        if (g0 !== k) mur(i, j, i, j + 1, k, g0);
-        if (g1 !== k) mur(i + 1, j, i + 1, j + 1, k, g1);
-        if (g2 !== k) mur(i, j, i + 1, j, k, g2);
-        if (g3 !== k) mur(i, j + 1, i + 1, j + 1, k, g3);
+        if (g0 !== u) mur(i, j, i, j + 1, u, g0);
+        if (g1 !== u) mur(i + 1, j, i + 1, j + 1, u, g1);
+        if (g2 !== u) mur(i, j, i + 1, j, u, g2);
+        if (g3 !== u) mur(i, j + 1, i + 1, j + 1, u, g3);
       }
     if (!idx.length) return;
     const geo = new THREE.BufferGeometry();
@@ -371,6 +585,14 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
       donnees = grille ? { g: grille, bats: batiments, lat0, lon0 } : null;
       construire();
       map?.triggerRepaint();
+      return bilan;
+    },
+    setMode(m) {
+      if (m !== mode) {
+        mode = m;
+        construire();
+        map?.triggerRepaint();
+      }
       return bilan;
     },
     setCouleurs(couleurs) {

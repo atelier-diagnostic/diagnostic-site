@@ -913,7 +913,7 @@ export function createAtelier(root: HTMLElement): Atelier {
       const couleurs = couleursBatiLidar(data);
       const bilan = coucheBati3D.setBati(
         g,
-        data.buildings.map((b, k) => ({ ring: b.polygon.map((p) => [p.lon, p.lat] as [number, number]), hRepli: b.heightM ?? DEFAULT_HEIGHT_M, couleur: couleurs[k] })),
+        data.buildings.map((b, k) => ({ ring: b.polygon.map((p) => [p.lon, p.lat] as [number, number]), hRepli: b.heightM ?? DEFAULT_HEIGHT_M, faitage: b.info?.faitageM, couleur: couleurs[k] })),
         ctx.lat,
         ctx.lon,
       );

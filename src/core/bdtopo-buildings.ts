@@ -35,6 +35,12 @@ function extractInfo(props: Record<string, unknown>): BuildingInfo {
     etages: num(props.nombre_d_etages),
     logements: num(props.nombre_de_logements),
     dateApparition: str(props.date_d_apparition),
+    faitageM: (() => {
+      const zt = props.altitude_maximale_toit, zs = props.altitude_minimale_sol;
+      if (typeof zt !== "number" || typeof zs !== "number") return undefined;
+      const h = zt - zs;
+      return h > 1 && h < 400 ? h : undefined;
+    })(),
   };
 }
 

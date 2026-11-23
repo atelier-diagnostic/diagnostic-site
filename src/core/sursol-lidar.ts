@@ -3,9 +3,14 @@
 //
 // Mêmes tuiles et même zoom que l'analyse de la canopée (canopee-lidar.ts) :
 // les deux partagent le cache des tuiles, rien n'est demandé deux fois.
-// Pixels hors couverture LiDAR : NaN.
+// Pixels hors couverture LiDAR : NaN. Avec la grille, le masque de végétation
+// de CoSIA (feuillus, conifères, broussailles), mêmes tuiles que la canopée,
+// pour écarter les houppiers qui surplombent un toit.
 
 import { hauteurSursolTuile, TAILLE_TUILE } from "../atelier/relief-dem";
+import { classesCosiaTuile, CLASSES_COSIA } from "./cosia";
+
+const VEGETAL = new Set(["feuillu", "conifere", "broussaille"].map((id) => CLASSES_COSIA.findIndex((c) => c.id === id)));
 
 const C = 20037508.342789244;
 const MAX_TUILES = 36;
@@ -15,6 +20,8 @@ export interface GrilleSursol {
   hauteur: number;
   /** Hauteur au-dessus du sol (m), ligne 0 au nord ; NaN hors couverture. */
   h: Float32Array;
+  /** 1 : végétation selon CoSIA ; 0 : autre ou inconnu. */
+  veg: Uint8Array;
   /** Coin nord-ouest de la grille et taille d'un pixel, en mètres Web Mercator. */
   x0: number;
   y0: number;
@@ -53,20 +60,23 @@ async function calculer(lat: number, lon: number, rayonM: number, progression?: 
   const nx = tx1 - tx0 + 1, ny = ty1 - ty0 + 1;
   const W = nx * TAILLE_TUILE, H = ny * TAILLE_TUILE;
   const h = new Float32Array(W * H).fill(NaN);
+  const veg = new Uint8Array(W * H);
   let recues = 0, faites = 0;
   const total = nx * ny;
   const taches: Promise<void>[] = [];
   for (let ty = ty0; ty <= ty1; ty++)
     for (let tx = tx0; tx <= tx1; tx++)
       taches.push(
-        hauteurSursolTuile(z, tx, ty)
-          .then((tuile) => {
+        Promise.all([hauteurSursolTuile(z, tx, ty), classesCosiaTuile(z, tx, ty).catch(() => null)])
+          .then(([tuile, cos]) => {
             recues++;
             const ox = (tx - tx0) * TAILLE_TUILE, oy = (ty - ty0) * TAILLE_TUILE;
             for (let j = 0; j < TAILLE_TUILE; j++)
               for (let i = 0; i < TAILLE_TUILE; i++) {
-                const v = tuile[j * TAILLE_TUILE + i];
-                if (Number.isFinite(v) && v > -50 && v < 400) h[(oy + j) * W + ox + i] = Math.max(0, v);
+                const k = j * TAILLE_TUILE + i, g = (oy + j) * W + ox + i;
+                const v = tuile[k];
+                if (Number.isFinite(v) && v > -50 && v < 400) h[g] = Math.max(0, v);
+                if (cos && VEGETAL.has(cos.classes[k])) veg[g] = 1;
               }
           })
           .catch(() => undefined)
@@ -74,5 +84,5 @@ async function calculer(lat: number, lon: number, rayonM: number, progression?: 
       );
   await Promise.all(taches);
   if (!recues) throw new Error("LiDAR HD indisponible");
-  return { largeur: W, hauteur: H, h, x0: -C + tx0 * t, y0: C - ty0 * t, pxMerc, pixelM: pxMerc / k, couverture: recues / total };
+  return { largeur: W, hauteur: H, h, veg, x0: -C + tx0 * t, y0: C - ty0 * t, pxMerc, pixelM: pxMerc / k, couverture: recues / total };
 }

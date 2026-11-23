@@ -4,10 +4,13 @@
 // dans une couche MapLibre, comme les arbres et la canopée.
 //
 // Construction (grille du MNH, ≈ 0,4 à 0,9 m selon le rayon) :
-//  - chaque pixel dont le centre tombe dans une emprise lui est rattaché ;
-//  - hauteur d'un pixel : celle du LiDAR ; les pixels de bord, où le laser
-//    mêle le toit et le sol (et ceux sans mesure), prennent la hauteur
-//    médiane du bâtiment ;
+//  - chaque pixel dont le centre tombe dans une emprise lui est rattaché
+//    (contours BD TOPO saisis « à la gouttière » : contour du toit) ;
+//  - pixels écartés (retours du 23/11, houppiers qui surplombent les toits) :
+//    végétation selon CoSIA, pixels plus hauts que le faîtage BD TOPO + 1,5 m,
+//    pixels de bord où le laser mêle toit et sol ; ils prennent la hauteur de
+//    leurs voisins mesurés ;
+//  - lissage médian 3 × 3 dans l'emprise (bruit des toits complexes) ;
 //  - toit : surface continue passant par les coins des pixels (moyenne des
 //    pixels voisins du même bâtiment) ;
 //  - murs verticaux au bord de l'emprise, du sol au toit, et entre deux
@@ -30,6 +33,8 @@ export interface BatimentPourVolume {
   ring: [number, number][];
   /** Hauteur de repli (BD TOPO, ou valeur par défaut) quand le LiDAR manque. */
   hRepli: number;
+  /** Faîtage BD TOPO au-dessus du sol (m) : plafond de plausibilité des mesures. */
+  faitage?: number;
   couleur: number;
 }
 
@@ -94,7 +99,7 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
     const px = g.pxMerc * f;
     const W = Math.ceil(g.largeur / f), H = Math.ceil(g.hauteur / f);
 
-    // Hauteurs agrégées (moyenne des pixels mesurés).
+    // Hauteurs agrégées (moyenne des pixels mesurés hors végétation CoSIA).
     const hg = new Float32Array(W * H).fill(NaN);
     for (let j = 0; j < H; j++)
       for (let i = 0; i < W; i++) {
@@ -103,7 +108,9 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
           for (let di = 0; di < f; di++) {
             const jj = j * f + dj, ii = i * f + di;
             if (jj >= g.hauteur || ii >= g.largeur) continue;
-            const v = g.h[jj * g.largeur + ii];
+            const gg = jj * g.largeur + ii;
+            const v = g.h[gg];
+            if (g.veg[gg]) continue;
             if (Number.isFinite(v)) {
               t += v;
               n++;
@@ -141,6 +148,9 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
     let mesures = 0;
     cellules.forEach((cs, k) => {
       if (!cs.length) return;
+      // Plafond : faîtage BD TOPO + 1,5 m (au-delà : arbre, antenne, grue).
+      const plafond = bats[k].faitage !== undefined ? bats[k].faitage! + 1.5 : Infinity;
+      for (const c of cs) if (hg[c] > plafond) hg[c] = NaN;
       const vals = cs.map((c) => hg[c]).filter((v) => Number.isFinite(v) && v > 0.5).sort((a, b) => a - b);
       if (vals.length < PART_MIN_MESUREE * cs.length) {
         for (const c of cs) hc[c] = bats[k].hRepli;
@@ -184,6 +194,22 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
         manque = reste;
       }
       for (const c of manque) hc[c] = med;
+      // Lissage médian 3 × 3 restreint au bâtiment : enlève le bruit sans arrondir les faîtages.
+      const lisse = new Map<number, number>();
+      for (const c of cs) {
+        const i = c % W, j = (c - i) / W;
+        const v: number[] = [];
+        for (let dj = -1; dj <= 1; dj++)
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di, jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+            const cc = jj * W + ii;
+            if (idg[cc] === k) v.push(hc[cc]);
+          }
+        v.sort((a, b) => a - b);
+        lisse.set(c, v[Math.floor(v.length / 2)]);
+      }
+      for (const [c, v] of lisse) hc[c] = v;
     });
     bilan = { batiments: cellules.filter((cs) => cs.length).length, mesures, pixelM: g.pixelM * f };
 

@@ -20,6 +20,8 @@ export interface BuildingInfo {
   logements?: number;
   /** Date d'apparition dans la base (souvent l'année de construction connue). */
   dateApparition?: string;
+  /** Hauteur du faîtage au-dessus du point bas du sol (m), BD TOPO : altitude_maximale_toit − altitude_minimale_sol. */
+  faitageM?: number;
 }
 
 export interface OsmBuildingsResult {

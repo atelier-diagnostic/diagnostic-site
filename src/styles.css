@@ -740,6 +740,8 @@ body[data-vue="atelier"] { overflow: hidden; }
 .mp-actions { display: flex; gap: 8px; }
 .mp-actions .btn-primary { flex: 1; height: 38px; font-size: 13px; }
 .mp-actions button:disabled { opacity: 0.5; cursor: progress; }
+.mp-actions-svg { margin-top: 6px; }
+.mp-actions-svg button { flex: 1; height: 32px; font-size: 12px; }
 .atelier .at-soleil:not([hidden]) ~ .mp-bouton { bottom: 150px; }
 @media (max-width: 800px) {
   .mp-panneau { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 62%; }

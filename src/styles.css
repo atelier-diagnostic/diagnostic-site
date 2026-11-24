@@ -727,6 +727,8 @@ body[data-vue="atelier"] { overflow: hidden; }
 .mp-un { font-size: 14px; color: var(--ink); }
 .mp-presets { display: flex; flex-wrap: wrap; gap: 4px; }
 .mp-presets button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.mp-cadre3d { position: absolute; z-index: 1; pointer-events: none; border: 1px dashed #1d1d1f; box-shadow: 0 0 0 100vmax rgba(29, 29, 31, 0.32); }
+.mp-cadre3d[hidden] { display: none; }
 .mp-cadrages { display: flex; flex-wrap: wrap; gap: 4px; }
 .mp-cadrages[hidden] { display: none; }
 .mp-cadrage { display: inline-flex; align-items: stretch; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; background: var(--panel); }

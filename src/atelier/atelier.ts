@@ -688,7 +688,9 @@ export function createAtelier(root: HTMLElement): Atelier {
     zoom: 5,
     maxPitch: 75,
     attributionControl: { compact: true },
-    canvasContextAttributes: { preserveDrawingBuffer: true }, // exports à venir (mise en page)
+    canvasContextAttributes: { preserveDrawingBuffer: true }, // exports (mise en page)
+    // Export de la vue 3D : la carte est rendue à haute résolution le temps de la capture.
+    maxCanvasSize: [8192, 8192],
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 140 }), "bottom-right");
@@ -2397,6 +2399,10 @@ export function createAtelier(root: HTMLElement): Atelier {
     site: () => site,
     arbres3d: () => (etat.get("arbres")!.actif && rendu === "volume" ? derniersArbres : null),
     passer2D: () => q<HTMLButtonElement>('.at-mode button[data-mode="2d"]').click(),
+    passer3D: () => {
+      if (!mode3d) q<HTMLButtonElement>('.at-mode button[data-mode="3d"]').click();
+    },
+    focale: () => focale,
     legende: () => {
       const items: ElementLegende[] = [];
       for (const c of COUCHES) {

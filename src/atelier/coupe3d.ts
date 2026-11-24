@@ -134,6 +134,11 @@ export function creerCoucheCoupe3D(id: string): CoucheCoupe3D {
         .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
       camera.projectionMatrix = new THREE.Matrix4().fromArray(args.defaultProjectionData.mainMatrix as unknown as number[]).multiply(modele);
       renderer.resetState();
+      // Fenêtre de rendu recalée sur la toile à chaque image : three.js retient
+      // la taille de la toile à sa création, fausse après un redimensionnement
+      // ou un changement de résolution (export de la vue 3D).
+      const glc = renderer.getContext();
+      renderer.setViewport(0, 0, glc.drawingBufferWidth, glc.drawingBufferHeight);
       renderer.render(scene, camera);
     },
     onRemove() {

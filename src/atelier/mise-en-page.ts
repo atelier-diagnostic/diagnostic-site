@@ -46,6 +46,17 @@ export interface OptionsMiseEnPage {
   arbres3d(): { arbres: ArbreOsm[]; lat0: number; lon0: number } | null;
   /** Bascule la vue en 2D (la planche est imprimée nord en haut, à plat). */
   passer2D(): void;
+  /** Bascule la vue en 3D (planche en perspective). */
+  passer3D(): void;
+  /** Focale de la caméra 3D (mm, équivalent 24 × 36). */
+  focale(): number;
+}
+
+/** Caméra d'une planche en perspective, pour l'habillage. */
+interface Camera3D {
+  pitch: number;
+  bearing: number;
+  focale: number;
 }
 
 interface Reglages {
@@ -55,6 +66,8 @@ interface Reglages {
   echelle: number;
   dpi: number;
   titre: string;
+  /** « plan » : à l'échelle, nord en haut ; « 3d » : vue en perspective, sans échelle. */
+  vue?: "plan" | "3d";
 }
 
 /** Géométrie de la planche (mm) : page, marges, bandeau, zone carte. */
@@ -234,7 +247,7 @@ async function rendre(
 
 // --- Habillage PDF (vectoriel) -------------------------------------------------------
 
-function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, solW: number, legende: ElementLegende[], site: string, lat: number): void {
+function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, solW: number, legende: ElementLegende[], site: string, lat: number, cam: Camera3D | null = null): void {
   const x0 = g.marge;
   const y0 = g.marge;
   const f = Math.max(1, Math.min(g.w, g.h) / 210); // facteur de taille des textes
@@ -242,8 +255,28 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   doc.setLineWidth(0.3 * f);
   doc.rect(x0, y0, g.carteW, g.carteH);
 
+  // Vue en perspective : flèche du nord au centre de l'image, ni nord solaire ni échelle.
+  if (cam) {
+    const R = 6 * f;
+    const cx = x0 + g.carteW - R - 4 * f, cy = y0 + R + 4 * f;
+    const a = (-cam.bearing * Math.PI) / 180;
+    const rot = (x: number, y: number): [number, number] => [cx + x * Math.cos(a) - y * Math.sin(a), cy + x * Math.sin(a) + y * Math.cos(a)];
+    const [p1, p2, p3, p4] = [rot(0, -R), rot(R * 0.38, R * 0.55), rot(0, R * 0.25), rot(-R * 0.38, R * 0.55)];
+    doc.setFillColor(29, 29, 31);
+    doc.setDrawColor(29, 29, 31);
+    doc.setLineWidth(0.25 * f);
+    doc.triangle(p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], "F");
+    doc.triangle(p1[0], p1[1], p3[0], p3[1], p4[0], p4[1], "S");
+    const [nx, ny] = rot(0, -R - 2.2 * f);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7 * f);
+    doc.setTextColor(29, 29, 31);
+    doc.text("N", nx, ny + 1 * f, { align: "center" });
+    doc.setLineWidth(0.3 * f);
+    doc.setDrawColor(40);
+  }
   // Nord solaire (haut droit de la carte), calculé pour la latitude du site.
-  {
+  if (!cam) {
     const R = 8 * f;
     const [ga, ha, dr, ba] = encombrement(R);
     const cx = x0 + g.carteW - dr - 2.5 * f;
@@ -278,6 +311,7 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   const lmm = L / mParMm;
   const sx = x0 + 5 * f;
   const sy = y0 + g.carteH - 7 * f;
+  if (!cam) {
   // Sans fond, en mode produit : cases noires pleines, cases claires en simple contour.
   doc.setDrawColor(29, 29, 31);
   doc.setFillColor(29, 29, 31);
@@ -288,6 +322,7 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   doc.text("0", sx, sy - 2.2 * f, { align: "center" });
   doc.text(`${L >= 1000 ? `${L / 1000} km` : `${L} m`}`, sx + lmm, sy - 2.2 * f, { align: "center" });
   doc.text(`1/${r.echelle.toLocaleString("fr-FR").replace(/ | /g, " ")}`, sx + lmm + 4 * f, sy + 0.4 * f);
+  }
 
   // Bandeau : cartouche à gauche, légende à droite
   const by = y0 + g.carteH + g.marge / 2;
@@ -303,11 +338,14 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   doc.setFontSize(7.5 * f);
   doc.setTextColor(72, 72, 77);
   const nomFormat = r.format === "libre" ? `${g.w} × ${g.h} mm` : `${r.format} ${r.paysage ? "paysage" : "portrait"}`;
-  const lignes = [
-    site,
-    `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`,
-    `Édité le ${new Date().toLocaleDateString("fr-FR")} · Lambert-93 / Web Mercator, nord en haut, heures solaires`,
-  ].filter(Boolean);
+  const lignes = (cam
+    ? [site, `Vue en perspective, sans échelle · ${nomFormat} · focale ${cam.focale} mm · inclinaison ${Math.round(cam.pitch)}°`, `Édité le ${new Date().toLocaleDateString("fr-FR")}`]
+    : [
+        site,
+        `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`,
+        `Édité le ${new Date().toLocaleDateString("fr-FR")} · Lambert-93 / Web Mercator, nord en haut, heures solaires`,
+      ]
+  ).filter(Boolean);
   doc.text(lignes.flatMap((l) => doc.splitTextToSize(l, colCart - 4 * f)).slice(0, 3), x0, by + (titre.length > 1 ? 15 : 11.5) * f, { lineHeightFactor: 1.3 });
   doc.setFontSize(5.8 * f);
   doc.setTextColor(110, 110, 115);
@@ -352,7 +390,7 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
 
 // --- Habillage PNG (canevas) ------------------------------------------------------------
 
-function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnType<typeof gabarit>, pxParMm: number, solW: number, legende: ElementLegende[], site: string, lat: number): void {
+function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnType<typeof gabarit>, pxParMm: number, solW: number, legende: ElementLegende[], site: string, lat: number, cam: Camera3D | null = null): void {
   const mm = (v: number) => v * pxParMm;
   const f = Math.max(1, Math.min(g.w, g.h) / 210);
   const x0 = mm(g.marge);
@@ -362,8 +400,23 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   ctx.strokeRect(x0, y0, mm(g.carteW), mm(g.carteH));
   const police = (taille: number, gras = false) => `${gras ? "600 " : ""}${mm(taille * 0.3528 * f)}px -apple-system, "Helvetica Neue", Arial, sans-serif`;
 
+  // Vue en perspective : flèche du nord au centre de l'image.
+  if (cam) {
+    const R = mm(6 * f);
+    const cx = x0 + mm(g.carteW) - R - mm(4 * f), cy = y0 + R + mm(4 * f);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate((-cam.bearing * Math.PI) / 180);
+    ctx.fillStyle = ctx.strokeStyle = "#1d1d1f";
+    ctx.lineWidth = mm(0.25 * f);
+    ctx.beginPath(); ctx.moveTo(0, -R); ctx.lineTo(R * 0.38, R * 0.55); ctx.lineTo(0, R * 0.25); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, -R); ctx.lineTo(0, R * 0.25); ctx.lineTo(-R * 0.38, R * 0.55); ctx.closePath(); ctx.stroke();
+    ctx.font = police(7, true); ctx.textAlign = "center";
+    ctx.fillText("N", 0, -R - mm(1.2 * f));
+    ctx.restore();
+  }
   // Nord solaire
-  {
+  if (!cam) {
     const R = 8 * f;
     const [ga, ha, dr, ba] = encombrement(R);
     const cx = x0 + mm(g.carteW - dr - 2.5 * f);
@@ -404,6 +457,7 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   const lmm = L / mParMm;
   const sx = x0 + mm(5 * f);
   const sy = y0 + mm(g.carteH - 7 * f);
+  if (!cam) {
   // Sans fond, en mode produit : cases noires pleines, cases claires en simple contour.
   ctx.strokeStyle = ctx.fillStyle = "#1d1d1f"; ctx.lineWidth = mm(0.2 * f);
   for (let k = 0; k < 4; k++) {
@@ -415,6 +469,7 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   ctx.fillText(L >= 1000 ? `${L / 1000} km` : `${L} m`, sx + mm(lmm), sy - mm(2.2 * f));
   ctx.textAlign = "left";
   ctx.fillText(`1/${r.echelle}`, sx + mm(lmm + 4 * f), sy + mm(0.4 * f));
+  }
 
   // Bandeau (cartouche à gauche, légende à droite ; textes coupés à leur colonne).
   const by = y0 + mm(g.carteH + g.marge / 2);
@@ -447,7 +502,9 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   ctx.font = police(7.5); ctx.fillStyle = "#48484d";
   const nomFormat = r.format === "libre" ? `${g.w} × ${g.h} mm` : `${r.format} ${r.paysage ? "paysage" : "portrait"}`;
   const debut = titre.length > 1 ? 15 : 11.5;
-  [site, `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`, `Édité le ${new Date().toLocaleDateString("fr-FR")} · nord en haut`]
+  (cam
+    ? [site, `Vue en perspective, sans échelle · ${nomFormat} · focale ${cam.focale} mm · inclinaison ${Math.round(cam.pitch)}°`, `Édité le ${new Date().toLocaleDateString("fr-FR")}`]
+    : [site, `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`, `Édité le ${new Date().toLocaleDateString("fr-FR")} · nord en haut`])
     .filter(Boolean)
     .slice(0, 3)
     .forEach((l, k) => ctx.fillText(tenir(l, largCart), x0, by + mm((debut + k * 3.4) * f)));
@@ -495,6 +552,8 @@ interface Cadrage extends Reglages {
   nom: string;
   /** Centre de la vue (la feuille entière y est centrée). */
   centre: [number, number];
+  /** Vue en perspective : zoom, inclinaison et orientation de la caméra. */
+  camera?: { zoom: number; pitch: number; bearing: number };
 }
 const CLE_CADRAGES = "atelier:cadrages";
 function lireCadrages(): Cadrage[] {
@@ -535,6 +594,11 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
       <div class="mp-cadrages"></div>
       <button type="button" class="mp-enregistrer">Enregistrer ce cadrage</button></div>
     <label class="mp-champ"><span>Titre</span><input type="text" class="mp-titre" maxlength="90" placeholder="Plan de situation"></label>
+    <div class="mp-champ"><span>Vue</span>
+      <div class="segmented seg-sm" role="group" aria-label="Type de vue">
+        <button type="button" data-vue="plan" aria-pressed="true" title="Plan à l'échelle, nord en haut">Plan à l'échelle</button>
+        <button type="button" data-vue="3d" aria-pressed="false" title="Vue 3D en perspective, cadrée à l'écran, sans échelle">Perspective 3D</button>
+      </div></div>
     <div class="mp-champ"><span>Format</span>
       <div class="segmented seg-sm mp-formats" role="group" aria-label="Format">
         ${[...Object.keys(FORMATS), "libre"].map((k) => `<button type="button" data-format="${k}" aria-pressed="${k === r.format}">${k === "libre" ? "Libre" : k}</button>`).join("")}
@@ -547,7 +611,7 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         <button type="button" data-orient="portrait" aria-pressed="false">Portrait</button>
         <button type="button" data-orient="paysage" aria-pressed="true">Paysage</button>
       </div></div>
-    <div class="mp-champ"><span>Échelle</span>
+    <div class="mp-champ mp-ch-echelle"><span>Échelle</span>
       <span class="mp-ligne"><span class="mp-un">1 /</span><input type="number" class="mp-echelle" min="100" max="500000" step="100" value="${r.echelle}" aria-label="Dénominateur d'échelle"></span>
       <span class="mp-presets">${[500, 1000, 2000, 5000, 10000].map((v) => `<button type="button" data-ech="${v}">1/${v}</button>`).join("")}</span></div>
     <div class="mp-champ"><span>Résolution</span>
@@ -566,7 +630,35 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
 
   const centreCarte = () => centreZoneCarte(r, map.getCenter());
 
+  // Vue en perspective : le cadre est une fenêtre à l'écran, aux proportions de la zone carte.
+  const cadre3d = document.createElement("div");
+  cadre3d.className = "mp-cadre3d";
+  cadre3d.hidden = true;
+  carte.appendChild(cadre3d);
+  /** Fenêtre de la planche 3D, en pixels CSS dans la toile de la carte. */
+  function rectCadre3D(): { x: number; y: number; w: number; h: number } {
+    const g = gabarit(r);
+    const m = margesVisibles();
+    const W = map.getCanvas().clientWidth, H = map.getCanvas().clientHeight;
+    const dispoW = (W - m.left - m.right) * 0.94, dispoH = (H - m.top - m.bottom) * 0.94;
+    const a = g.carteW / g.carteH;
+    const w = Math.min(dispoW, dispoH * a), h = w / a;
+    return { x: m.left + (W - m.left - m.right - w) / 2, y: m.top + (H - m.top - m.bottom - h) / 2, w, h };
+  }
   const majCadre = () => {
+    if (r.vue === "3d") {
+      const c = rectCadre3D();
+      Object.assign(cadre3d.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
+      cadre3d.hidden = panneau.hidden;
+      if (map.getLayer("cadre-ligne")) for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "none");
+      const g = gabarit(r);
+      q<HTMLElement>(".mp-info").textContent =
+        `Feuille ${g.w} × ${g.h} mm · carte ${Math.round(g.carteW)} × ${Math.round(g.carteH)} mm. ` +
+        `Vue en perspective : pas d'échelle. Cadrez dans la fenêtre (clic droit ou Ctrl + glisser pour incliner et tourner).`;
+      return;
+    }
+    cadre3d.hidden = true;
+    if (!panneau.hidden && map.getLayer("cadre-ligne")) for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "visible");
     const src = map.getSource("cadre") as maplibregl.GeoJSONSource | undefined;
     src?.setData(polygoneCadre(r, centreCarte()));
     const g = gabarit(r);
@@ -609,25 +701,33 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         map.addLayer({ id: "cadre-page", type: "line", source: "cadre", filter: ["==", ["get", "role"], "page"], paint: { "line-color": "#1d1d1f", "line-width": 1.5 } });
         map.addLayer({ id: "cadre-ligne", type: "line", source: "cadre", filter: ["==", ["get", "role"], "cadre"], paint: { "line-color": "#1d1d1f", "line-width": 1, "line-dasharray": [3, 2] } });
       }
-      for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "visible");
-      // Vue imprimée : nord en haut, sans inclinaison.
-      o.passer2D();
-      map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+      if (r.vue === "3d") o.passer3D();
+      else {
+        for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "visible");
+        // Vue imprimée : nord en haut, sans inclinaison.
+        o.passer2D();
+        map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+      }
       // Titre par défaut : repris à l'export si le site n'est pas encore chargé.
       const siteActuel = o.site();
       if (!r.titre && siteActuel) {
         r.titre = `Plan de situation — ${siteActuel.label}`;
         q<HTMLInputElement>(".mp-titre").value = r.titre;
       }
-      cadrer();
-    } else if (map.getLayer("cadre-ligne")) {
-      for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "none");
+      if (r.vue === "3d") {
+        map.setPadding(margesVisibles());
+        majCadre();
+      } else cadrer();
+    } else {
+      cadre3d.hidden = true;
+      if (map.getLayer("cadre-ligne")) for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "none");
       map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     }
   }
   bouton.addEventListener("click", () => ouvrir(true));
   q<HTMLButtonElement>(".mp-fermer").addEventListener("click", () => ouvrir(false));
   map.on("move", () => { if (!panneau.hidden) majCadre(); });
+  map.on("resize", () => { if (!panneau.hidden) majCadre(); });
 
   const segment = (attr: string, f: (v: string) => void) =>
     panneau.querySelectorAll<HTMLButtonElement>(`[${attr}]`).forEach((b) =>
@@ -642,6 +742,16 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     q<HTMLElement>(".mp-libre").hidden = v !== "libre";
   });
   segment("data-orient", (v) => (r.paysage = v === "paysage"));
+  segment("data-vue", (v) => {
+    r.vue = v as "plan" | "3d";
+    q<HTMLElement>(".mp-ch-echelle").hidden = v === "3d";
+    if (v === "3d") o.passer3D();
+    else {
+      o.passer2D();
+      map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+      setTimeout(cadrer, 450);
+    }
+  });
   segment("data-dpi", (v) => (r.dpi = Number(v)));
   panneau.querySelectorAll<HTMLButtonElement>("[data-ech]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -671,6 +781,8 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     presser("data-format", r.format);
     presser("data-orient", r.paysage ? "paysage" : "portrait");
     presser("data-dpi", String(r.dpi));
+    presser("data-vue", r.vue ?? "plan");
+    q<HTMLElement>(".mp-ch-echelle").hidden = r.vue === "3d";
     q<HTMLElement>(".mp-libre").hidden = r.format !== "libre";
     q<HTMLInputElement>(".mp-lw").value = String(r.libre[0]);
     q<HTMLInputElement>(".mp-lh").value = String(r.libre[1]);
@@ -682,16 +794,26 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     zone.hidden = !cadrages.length;
     zone.innerHTML = cadrages
       .map(
-        (c, i) => `<span class="mp-cadrage"><button type="button" data-cadrage="${i}" title="${c.format === "libre" ? `${c.libre[0]} × ${c.libre[1]} mm` : `${c.format} ${c.paysage ? "paysage" : "portrait"}`} · 1/${c.echelle}">${c.nom.replace(/[&<>"]/g, (m) => `&#${m.charCodeAt(0)};`)}</button><button type="button" class="mp-suppr" data-suppr="${i}" aria-label="Supprimer le cadrage ${c.nom.replace(/[&<>"]/g, "")}">✕</button></span>`,
+        (c, i) => `<span class="mp-cadrage"><button type="button" data-cadrage="${i}" title="${c.format === "libre" ? `${c.libre[0]} × ${c.libre[1]} mm` : `${c.format} ${c.paysage ? "paysage" : "portrait"}`} · ${c.vue === "3d" ? "perspective 3D" : `1/${c.echelle}`}">${c.nom.replace(/[&<>"]/g, (m) => `&#${m.charCodeAt(0)};`)}</button><button type="button" class="mp-suppr" data-suppr="${i}" aria-label="Supprimer le cadrage ${c.nom.replace(/[&<>"]/g, "")}">✕</button></span>`,
       )
       .join("");
     zone.querySelectorAll<HTMLButtonElement>("[data-cadrage]").forEach((b) =>
       b.addEventListener("click", () => {
         const c = cadrages[Number(b.dataset.cadrage)];
-        Object.assign(r, { format: c.format, libre: [...c.libre] as [number, number], paysage: c.paysage, echelle: c.echelle, dpi: c.dpi, titre: c.titre });
+        Object.assign(r, { format: c.format, libre: [...c.libre] as [number, number], paysage: c.paysage, echelle: c.echelle, dpi: c.dpi, titre: c.titre, vue: c.vue ?? "plan" });
         majPanneau();
-        map.jumpTo({ center: c.centre });
-        cadrer();
+        if (r.vue === "3d" && c.camera) {
+          o.passer3D();
+          // Après la bascule en 3D (qui anime la caméra), on pose la caméra enregistrée.
+          setTimeout(() => {
+            map.jumpTo({ center: c.centre, zoom: c.camera!.zoom, pitch: c.camera!.pitch, bearing: c.camera!.bearing });
+            majCadre();
+          }, 650);
+        } else {
+          o.passer2D();
+          map.jumpTo({ center: c.centre, pitch: 0, bearing: 0 });
+          cadrer();
+        }
         q<HTMLElement>(".mp-etat").textContent = `Cadrage « ${c.nom} » rappelé.`;
       }),
     );
@@ -704,11 +826,17 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     );
   }
   q<HTMLButtonElement>(".mp-enregistrer").addEventListener("click", () => {
-    const defaut = `${r.titre.replace(/^Plan de situation — /, "") || "Cadrage"} · 1/${r.echelle}`;
+    const defaut = `${r.titre.replace(/^Plan de situation — /, "") || "Cadrage"} · ${r.vue === "3d" ? "3D" : `1/${r.echelle}`}`;
     const nom = window.prompt("Nom du cadrage", defaut)?.trim();
     if (!nom) return;
     const c = map.getCenter();
-    const nouveau: Cadrage = { ...r, libre: [...r.libre] as [number, number], nom, centre: [c.lng, c.lat] };
+    const nouveau: Cadrage = {
+      ...r,
+      libre: [...r.libre] as [number, number],
+      nom,
+      centre: [c.lng, c.lat],
+      camera: r.vue === "3d" ? { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() } : undefined,
+    };
     const k = cadrages.findIndex((x) => x.nom === nom);
     if (k >= 0) cadrages[k] = nouveau;
     else cadrages.push(nouveau);
@@ -723,6 +851,45 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
   const boutons = [q<HTMLButtonElement>(".mp-pdf"), q<HTMLButtonElement>(".mp-png")];
   const nomFichier = (ext: string) =>
     `${(r.titre || "plan").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "plan"}_1-${r.echelle}.${ext}`;
+
+  /**
+   * Capture de la vue 3D : la carte est rendue le temps de la capture à une
+   * résolution plus forte (même cadrage à l'écran), puis la fenêtre du cadre
+   * est découpée dans la toile. Résolution plafonnée par la carte graphique
+   * (8192 px de côté) : la résolution obtenue est indiquée.
+   */
+  async function capturer3D(pxW: number): Promise<{ img: HTMLCanvasElement; dpiObtenu: number }> {
+    const fr = rectCadre3D();
+    const toile = map.getCanvas();
+    const ancien = map.getPixelRatio();
+    cadre3d.hidden = true;
+    map.setPixelRatio(Math.max(ancien, pxW / fr.w));
+    try {
+      await new Promise<void>((ok) => {
+        const t = setTimeout(ok, 30_000); // ne bloque pas sur une tuile perdue
+        map.once("idle", () => {
+          clearTimeout(t);
+          ok();
+        });
+        map.triggerRepaint();
+      });
+      // Une image de plus pour que les couches three.js soient dessinées à la nouvelle taille.
+      await new Promise<void>((ok) => {
+        map.once("render", () => requestAnimationFrame(() => ok()));
+        map.triggerRepaint();
+      });
+      const k = toile.width / toile.clientWidth; // résolution réellement obtenue (plafonnée)
+      const img = document.createElement("canvas");
+      img.width = Math.round(fr.w * k);
+      img.height = Math.round(fr.h * k);
+      img.getContext("2d")!.drawImage(toile, fr.x * k, fr.y * k, fr.w * k, fr.h * k, 0, 0, img.width, img.height);
+      const g = gabarit(r);
+      return { img, dpiObtenu: Math.round((img.width / g.carteW) * 25.4) };
+    } finally {
+      map.setPixelRatio(ancien);
+      cadre3d.hidden = panneau.hidden || r.vue !== "3d";
+    }
+  }
 
   async function exporter(type: "pdf" | "png"): Promise<void> {
     const g = gabarit(r);
@@ -743,13 +910,24 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     const pxW = Math.round(g.carteW * pxParMm);
     const pxH = Math.round(g.carteH * pxParMm);
     boutons.forEach((b) => (b.disabled = true));
+    // Vue en perspective : capture de la caméra, habillage sans échelle.
+    const cam: Camera3D | null = r.vue === "3d" ? { pitch: map.getPitch(), bearing: map.getBearing(), focale: o.focale() } : null;
     try {
+      let vue3d: HTMLCanvasElement | null = null;
+      if (cam) {
+        etat.textContent = "Rendu de la vue 3D…";
+        const cap = await capturer3D(pxW);
+        vue3d = cap.img;
+        dpi = Math.min(dpi, cap.dpiObtenu);
+      }
       if (type === "pdf") {
         const doc = new jsPDF({ orientation: g.w > g.h ? "landscape" : "portrait", unit: "mm", format: [g.w, g.h], compress: true });
-        await rendre(o.arbres3d(), map, r, centre, pxW, pxH, (img, x, y) => {
-          doc.addImage(img.toDataURL("image/jpeg", 0.9), "JPEG", g.marge + x / pxParMm, g.marge + y / pxParMm, img.width / pxParMm, img.height / pxParMm, undefined, "FAST");
-        }, (f, t) => (etat.textContent = `Rendu de la carte : ${f}/${t}…`));
-        habillagePdf(doc, r, g, e.solW, legende, site, lat);
+        if (vue3d) doc.addImage(vue3d.toDataURL("image/jpeg", 0.92), "JPEG", g.marge, g.marge, g.carteW, g.carteH, undefined, "FAST");
+        else
+          await rendre(o.arbres3d(), map, r, centre, pxW, pxH, (img, x, y) => {
+            doc.addImage(img.toDataURL("image/jpeg", 0.9), "JPEG", g.marge + x / pxParMm, g.marge + y / pxParMm, img.width / pxParMm, img.height / pxParMm, undefined, "FAST");
+          }, (f, t) => (etat.textContent = `Rendu de la carte : ${f}/${t}…`));
+        habillagePdf(doc, r, g, e.solW, legende, site, lat, cam);
         doc.save(nomFichier("pdf"));
       } else {
         const c = document.createElement("canvas");
@@ -758,9 +936,13 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         const ctx = c.getContext("2d")!;
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, c.width, c.height);
-        await rendre(o.arbres3d(), map, r, centre, pxW, pxH, (img, x, y) => ctx.drawImage(img, Math.round(g.marge * pxParMm) + x, Math.round(g.marge * pxParMm) + y),
-          (f, t) => (etat.textContent = `Rendu de la carte : ${f}/${t}…`));
-        habillageCanvas(ctx, r, g, pxParMm, e.solW, legende, site, lat);
+        if (vue3d) {
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(vue3d, Math.round(g.marge * pxParMm), Math.round(g.marge * pxParMm), pxW, pxH);
+        } else
+          await rendre(o.arbres3d(), map, r, centre, pxW, pxH, (img, x, y) => ctx.drawImage(img, Math.round(g.marge * pxParMm) + x, Math.round(g.marge * pxParMm) + y),
+            (f, t) => (etat.textContent = `Rendu de la carte : ${f}/${t}…`));
+        habillageCanvas(ctx, r, g, pxParMm, e.solW, legende, site, lat, cam);
         const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/png"));
         if (!blob) throw new Error("image trop grande");
         const a = document.createElement("a");
@@ -769,7 +951,9 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       }
-      etat.textContent = `Export terminé (${dpi} dpi).`;
+      etat.textContent = cam && dpi < r.dpi
+        ? `Export terminé : vue 3D à ${dpi} dpi (plafond de la carte graphique ; ${r.dpi} dpi demandés).`
+        : `Export terminé (${dpi} dpi).`;
     } catch (err) {
       etat.textContent = `Export impossible : ${(err as Error).message}. Essayez 150 dpi ou un format plus petit.`;
     } finally {

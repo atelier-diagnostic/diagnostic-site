@@ -65,7 +65,8 @@ function gabarit(r: Reglages) {
   const marge = Math.max(8, Math.round(court * 0.04));
   // Bandeau proportionnel au facteur de taille des textes (f = 1 en A4).
   const f = Math.max(1, court / 210);
-  const bandeau = Math.round(36 * f);
+  // Bandeau réduit de 20 % (retours du 24/11 : plus de place pour la carte).
+  const bandeau = Math.round(29 * f);
   return { w, h, marge, bandeau, carteW: w - 2 * marge, carteH: h - 2 * marge - bandeau - marge / 2 };
 }
 
@@ -247,8 +248,8 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
     const [ga, ha, dr, ba] = encombrement(R);
     const cx = x0 + g.carteW - dr - 2.5 * f;
     const cy = y0 + ha + 2.5 * f;
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(cx - ga - 1.5 * f, cy - ha - 1.5 * f, ga + dr + 3 * f, ha + ba + 3 * f, 1.5 * f, 1.5 * f, "F");
+    // Sans fond, en mode produit : seul le trait noir est posé sur la carte.
+    void ga; void ba;
     doc.setDrawColor(29, 29, 31);
     doc.setFillColor(29, 29, 31);
     doc.setTextColor(29, 29, 31);
@@ -277,13 +278,11 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   const lmm = L / mParMm;
   const sx = x0 + 5 * f;
   const sy = y0 + g.carteH - 7 * f;
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(sx - 2.5 * f, sy - 6 * f, lmm + 5 * f + 18 * f, 10 * f, 1.5 * f, 1.5 * f, "F");
-  for (let k = 0; k < 4; k++) {
-    if (k % 2 === 0) doc.setFillColor(29, 29, 31);
-    else doc.setFillColor(255, 255, 255);
-    doc.rect(sx + (k * lmm) / 4, sy - 1.2 * f, lmm / 4, 1.6 * f, "FD");
-  }
+  // Sans fond, en mode produit : cases noires pleines, cases claires en simple contour.
+  doc.setDrawColor(29, 29, 31);
+  doc.setFillColor(29, 29, 31);
+  doc.setLineWidth(0.2 * f);
+  for (let k = 0; k < 4; k++) doc.rect(sx + (k * lmm) / 4, sy - 1.2 * f, lmm / 4, 1.6 * f, k % 2 === 0 ? "FD" : "S");
   doc.setFont("helvetica", "normal");
   doc.setFontSize(6.5 * f);
   doc.text("0", sx, sy - 2.2 * f, { align: "center" });
@@ -298,7 +297,8 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   const colCart = g.carteW * 0.42;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11 * f);
-  doc.text(doc.splitTextToSize(r.titre || "Plan", colCart - 4 * f).slice(0, 2), x0, by + 7 * f);
+  const titre = doc.splitTextToSize(r.titre || "Plan", colCart - 4 * f).slice(0, 2) as string[];
+  doc.text(titre, x0, by + 6 * f);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5 * f);
   doc.setTextColor(72, 72, 77);
@@ -308,11 +308,11 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
     `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`,
     `Édité le ${new Date().toLocaleDateString("fr-FR")} · Lambert-93 / Web Mercator, nord en haut, heures solaires`,
   ].filter(Boolean);
-  doc.text(lignes.flatMap((l) => doc.splitTextToSize(l, colCart - 4 * f)), x0, by + 15 * f, { lineHeightFactor: 1.35 });
+  doc.text(lignes.flatMap((l) => doc.splitTextToSize(l, colCart - 4 * f)).slice(0, 3), x0, by + (titre.length > 1 ? 15 : 11.5) * f, { lineHeightFactor: 1.3 });
   doc.setFontSize(5.8 * f);
   doc.setTextColor(110, 110, 115);
   const sources = `Sources : ${[...new Set(legende.map((l) => l.source))].join(" · ")}. Diagnostic de site, données ouvertes.`;
-  doc.text(doc.splitTextToSize(sources, colCart - 4 * f).slice(0, 2), x0, by + bh - 5 * f);
+  doc.text(doc.splitTextToSize(sources, colCart - 4 * f).slice(0, 2), x0, by + bh - 4 * f);
 
   // Légende en colonnes
   const lx0 = x0 + colCart + 4 * f;
@@ -320,14 +320,14 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
   const nCol = lw > 160 * f ? 3 : 2;
   const cw = lw / nCol;
   let col = 0;
-  let ly = by + 6 * f;
-  const pas = 4 * f;
+  let ly = by + 5 * f;
+  const pas = 3.6 * f;
   doc.setTextColor(29, 29, 31);
   for (const el of legende) {
     const hauteur = pas * (1 + (el.pastilles ? Math.ceil(el.pastilles.length / 2) : 0));
-    if (ly + hauteur > by + bh - 2 * f) {
+    if (ly + hauteur > by + bh - 1 * f) {
       col++;
-      ly = by + 6 * f;
+      ly = by + 5 * f;
       if (col >= nCol) break;
     }
     const lx = lx0 + col * cw;
@@ -368,8 +368,8 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
     const [ga, ha, dr, ba] = encombrement(R);
     const cx = x0 + mm(g.carteW - dr - 2.5 * f);
     const cy = y0 + mm(ha + 2.5 * f);
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(cx - mm(ga + 1.5 * f), cy - mm(ha + 1.5 * f), mm(ga + dr + 3 * f), mm(ha + ba + 3 * f));
+    // Sans fond, en mode produit.
+    void ga; void ba;
     ctx.strokeStyle = ctx.fillStyle = "#1d1d1f";
     ctx.lineCap = ctx.lineJoin = "round";
     for (const p of nordSolaire(lat, R)) {
@@ -404,12 +404,10 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   const lmm = L / mParMm;
   const sx = x0 + mm(5 * f);
   const sy = y0 + mm(g.carteH - 7 * f);
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(sx - mm(2.5 * f), sy - mm(6 * f), mm(lmm + 23 * f), mm(10 * f));
-  ctx.strokeStyle = "#1d1d1f"; ctx.lineWidth = mm(0.2 * f);
+  // Sans fond, en mode produit : cases noires pleines, cases claires en simple contour.
+  ctx.strokeStyle = ctx.fillStyle = "#1d1d1f"; ctx.lineWidth = mm(0.2 * f);
   for (let k = 0; k < 4; k++) {
-    ctx.fillStyle = k % 2 === 0 ? "#1d1d1f" : "#fff";
-    ctx.fillRect(sx + mm((k * lmm) / 4), sy - mm(1.2 * f), mm(lmm / 4), mm(1.6 * f));
+    if (k % 2 === 0) ctx.fillRect(sx + mm((k * lmm) / 4), sy - mm(1.2 * f), mm(lmm / 4), mm(1.6 * f));
     ctx.strokeRect(sx + mm((k * lmm) / 4), sy - mm(1.2 * f), mm(lmm / 4), mm(1.6 * f));
   }
   ctx.fillStyle = "#1d1d1f"; ctx.font = police(6.5);
@@ -418,37 +416,100 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
   ctx.textAlign = "left";
   ctx.fillText(`1/${r.echelle}`, sx + mm(lmm + 4 * f), sy + mm(0.4 * f));
 
-  // Bandeau
+  // Bandeau (cartouche à gauche, légende à droite ; textes coupés à leur colonne).
   const by = y0 + mm(g.carteH + g.marge / 2);
+  const colCart = g.carteW * 0.42;
+  const largCart = mm(colCart - 4 * f);
+  /** Découpe un texte en lignes tenant dans `larg` px (police courante). */
+  const couper = (t: string, larg: number): string[] => {
+    const lignes: string[] = [];
+    let cour = "";
+    for (const mot of t.split(" ")) {
+      const essai = cour ? `${cour} ${mot}` : mot;
+      if (ctx.measureText(essai).width > larg && cour) {
+        lignes.push(cour);
+        cour = mot;
+      } else cour = essai;
+    }
+    if (cour) lignes.push(cour);
+    return lignes;
+  };
+  /** Une seule ligne : tronquée avec « … » si besoin. */
+  const tenir = (t: string, larg: number): string => {
+    if (ctx.measureText(t).width <= larg) return t;
+    while (t.length > 1 && ctx.measureText(`${t}…`).width > larg) t = t.slice(0, -1);
+    return `${t}…`;
+  };
+  ctx.textAlign = "left";
   ctx.fillStyle = "#1d1d1f"; ctx.font = police(11, true);
-  ctx.fillText(r.titre || "Plan", x0, by + mm(7 * f));
+  const titre = couper(r.titre || "Plan", largCart).slice(0, 2);
+  titre.forEach((l, k) => ctx.fillText(l, x0, by + mm((6 + k * 4.6) * f)));
   ctx.font = police(7.5); ctx.fillStyle = "#48484d";
   const nomFormat = r.format === "libre" ? `${g.w} × ${g.h} mm` : `${r.format} ${r.paysage ? "paysage" : "portrait"}`;
+  const debut = titre.length > 1 ? 15 : 11.5;
   [site, `Échelle 1/${r.echelle} · ${nomFormat} · emprise ${Math.round(solW)} m de large`, `Édité le ${new Date().toLocaleDateString("fr-FR")} · nord en haut`]
     .filter(Boolean)
-    .forEach((l, k) => ctx.fillText(l, x0, by + mm((15 + k * 3.6) * f)));
+    .slice(0, 3)
+    .forEach((l, k) => ctx.fillText(tenir(l, largCart), x0, by + mm((debut + k * 3.4) * f)));
   ctx.font = police(5.8); ctx.fillStyle = "#6e6e73";
-  ctx.fillText(`Sources : ${[...new Set(legende.map((l) => l.source))].join(" · ")}`, x0, by + mm(g.bandeau - 6 * f));
+  couper(`Sources : ${[...new Set(legende.map((l) => l.source))].join(" · ")}`, largCart)
+    .slice(0, 2)
+    .forEach((l, k, t) => ctx.fillText(l, x0, by + mm(g.bandeau - (4 + (t.length - 1 - k) * 2.4) * f)));
 
-  const colCart = g.carteW * 0.42;
-  let ly = by + mm(6 * f);
-  let lx = x0 + mm(colCart + 4 * f);
-  const colW = mm((g.carteW - colCart - 4 * f) / 2);
+  const lw = g.carteW - colCart - 4 * f;
+  const nCol = lw > 160 * f ? 3 : 2;
+  const colW = mm(lw / nCol);
+  const pas = mm(3.6 * f);
+  const haut0 = by + mm(5 * f), bas = by + mm(g.bandeau - 1 * f);
+  let col = 0;
+  let ly = haut0;
   for (const el of legende) {
-    if (ly > by + mm(g.bandeau - 6 * f)) { ly = by + mm(6 * f); lx += colW; if (lx > x0 + mm(g.carteW) - 10) break; }
+    const hauteur = pas * (1 + (el.pastilles ? Math.ceil(el.pastilles.length / 2) : 0));
+    if (ly + hauteur > bas) {
+      col++;
+      ly = haut0;
+      if (col >= nCol) break;
+    }
+    const lx = x0 + mm(colCart + 4 * f) + col * colW;
     ctx.fillStyle = "#1d1d1f"; ctx.font = police(6.8, true);
-    ctx.fillText(el.titre, lx, ly);
-    ly += mm(4 * f);
+    ctx.fillText(tenir(el.titre, colW - mm(3 * f)), lx, ly);
+    ly += pas;
     if (el.pastilles) {
       ctx.font = police(6);
       el.pastilles.forEach((p, k) => {
         const px = lx + (k % 2) * (colW / 2);
-        const py = ly + Math.floor(k / 2) * mm(4 * f);
+        const py = ly + Math.floor(k / 2) * pas;
         ctx.fillStyle = p.couleur; ctx.fillRect(px, py - mm(2.4 * f), mm(3 * f), mm(2.4 * f));
-        ctx.fillStyle = "#1d1d1f"; ctx.fillText(p.libelle, px + mm(4 * f), py - mm(0.3 * f));
+        ctx.fillStyle = "#1d1d1f"; ctx.fillText(tenir(p.libelle, colW / 2 - mm(5 * f)), px + mm(4 * f), py - mm(0.3 * f));
       });
-      ly += Math.ceil(el.pastilles.length / 2) * mm(4 * f);
+      ly += Math.ceil(el.pastilles.length / 2) * pas;
     }
+  }
+}
+
+// --- Cadrages enregistrés -------------------------------------------------------------
+// Comme les vues de l'atelier : format, orientation, échelle, résolution,
+// titre et position du cadre, rappelés d'un clic. Stockés dans ce navigateur.
+
+interface Cadrage extends Reglages {
+  nom: string;
+  /** Centre de la vue (la feuille entière y est centrée). */
+  centre: [number, number];
+}
+const CLE_CADRAGES = "atelier:cadrages";
+function lireCadrages(): Cadrage[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(CLE_CADRAGES) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((c: Cadrage) => c && typeof c.nom === "string" && Array.isArray(c.centre) && typeof c.echelle === "number") : [];
+  } catch {
+    return [];
+  }
+}
+function ecrireCadrages(c: Cadrage[]): void {
+  try {
+    localStorage.setItem(CLE_CADRAGES, JSON.stringify(c));
+  } catch {
+    /* stockage indisponible : valables pour la session */
   }
 }
 
@@ -470,6 +531,9 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
   panneau.innerHTML = `
     <div class="mp-tete"><strong>Mise en page</strong>
       <button type="button" class="icon-btn mp-fermer" aria-label="Fermer la mise en page">✕</button></div>
+    <div class="mp-champ"><span>Cadrages enregistrés</span>
+      <div class="mp-cadrages"></div>
+      <button type="button" class="mp-enregistrer">Enregistrer ce cadrage</button></div>
     <label class="mp-champ"><span>Titre</span><input type="text" class="mp-titre" maxlength="90" placeholder="Plan de situation"></label>
     <div class="mp-champ"><span>Format</span>
       <div class="segmented seg-sm mp-formats" role="group" aria-label="Format">
@@ -519,6 +583,20 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
       ? { top: 70, left: 12, right: 12, bottom: Math.round(carte.clientHeight * 0.62) + 12 }
       : { top: 70, left: 24, right: 380, bottom: 40 };
 
+  /** Zoom pour voir toute la feuille autour du centre de la vue. */
+  function cadrer(): void {
+    const f = empriseFeuille(r, centreCarte());
+    const dx = (f.e - f.o) * 0.08, dy = (f.n - f.s) * 0.08;
+    const [w, s] = merc2ll(f.o - dx, f.s - dy);
+    const [est, n] = merc2ll(f.e + dx, f.n + dy);
+    // Le panneau couvre la droite (ordinateur) ou le bas (téléphone) de la
+    // carte : on décale le centre de la carte vers la partie visible, et le
+    // cadre suit ce centre.
+    map.setPadding(margesVisibles());
+    map.fitBounds([[w, s], [est, n]], { duration: 400 });
+    majCadre();
+  }
+
   function ouvrir(v: boolean): void {
     panneau.hidden = !v;
     bouton.hidden = v;
@@ -541,17 +619,7 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         r.titre = `Plan de situation — ${siteActuel.label}`;
         q<HTMLInputElement>(".mp-titre").value = r.titre;
       }
-      // Zoom pour voir tout le cadre.
-      const f = empriseFeuille(r, centreCarte());
-      const dx = (f.e - f.o) * 0.08, dy = (f.n - f.s) * 0.08;
-      const [w, s] = merc2ll(f.o - dx, f.s - dy);
-      const [est, n] = merc2ll(f.e + dx, f.n + dy);
-      // Le panneau couvre la droite (ordinateur) ou le bas (téléphone) de la
-      // carte : on décale le centre de la carte vers la partie visible, et le
-      // cadre suit ce centre.
-      map.setPadding(margesVisibles());
-      map.fitBounds([[w, s], [est, n]], { duration: 400 });
-      majCadre();
+      cadrer();
     } else if (map.getLayer("cadre-ligne")) {
       for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "none");
       map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
@@ -593,6 +661,62 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     });
   }
   q<HTMLInputElement>(".mp-titre").addEventListener("input", (e) => (r.titre = (e.target as HTMLInputElement).value));
+
+  // --- Cadrages enregistrés ------------------------------------------------
+  let cadrages = lireCadrages();
+  /** Recopie les réglages dans le panneau (boutons, champs). */
+  function majPanneau(): void {
+    const presser = (attr: string, val: string) =>
+      panneau.querySelectorAll(`[${attr}]`).forEach((x) => x.setAttribute("aria-pressed", String(x.getAttribute(attr) === val)));
+    presser("data-format", r.format);
+    presser("data-orient", r.paysage ? "paysage" : "portrait");
+    presser("data-dpi", String(r.dpi));
+    q<HTMLElement>(".mp-libre").hidden = r.format !== "libre";
+    q<HTMLInputElement>(".mp-lw").value = String(r.libre[0]);
+    q<HTMLInputElement>(".mp-lh").value = String(r.libre[1]);
+    q<HTMLInputElement>(".mp-echelle").value = String(r.echelle);
+    q<HTMLInputElement>(".mp-titre").value = r.titre;
+  }
+  function majCadrages(): void {
+    const zone = q<HTMLElement>(".mp-cadrages");
+    zone.hidden = !cadrages.length;
+    zone.innerHTML = cadrages
+      .map(
+        (c, i) => `<span class="mp-cadrage"><button type="button" data-cadrage="${i}" title="${c.format === "libre" ? `${c.libre[0]} × ${c.libre[1]} mm` : `${c.format} ${c.paysage ? "paysage" : "portrait"}`} · 1/${c.echelle}">${c.nom.replace(/[&<>"]/g, (m) => `&#${m.charCodeAt(0)};`)}</button><button type="button" class="mp-suppr" data-suppr="${i}" aria-label="Supprimer le cadrage ${c.nom.replace(/[&<>"]/g, "")}">✕</button></span>`,
+      )
+      .join("");
+    zone.querySelectorAll<HTMLButtonElement>("[data-cadrage]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const c = cadrages[Number(b.dataset.cadrage)];
+        Object.assign(r, { format: c.format, libre: [...c.libre] as [number, number], paysage: c.paysage, echelle: c.echelle, dpi: c.dpi, titre: c.titre });
+        majPanneau();
+        map.jumpTo({ center: c.centre });
+        cadrer();
+        q<HTMLElement>(".mp-etat").textContent = `Cadrage « ${c.nom} » rappelé.`;
+      }),
+    );
+    zone.querySelectorAll<HTMLButtonElement>("[data-suppr]").forEach((b) =>
+      b.addEventListener("click", () => {
+        cadrages.splice(Number(b.dataset.suppr), 1);
+        ecrireCadrages(cadrages);
+        majCadrages();
+      }),
+    );
+  }
+  q<HTMLButtonElement>(".mp-enregistrer").addEventListener("click", () => {
+    const defaut = `${r.titre.replace(/^Plan de situation — /, "") || "Cadrage"} · 1/${r.echelle}`;
+    const nom = window.prompt("Nom du cadrage", defaut)?.trim();
+    if (!nom) return;
+    const c = map.getCenter();
+    const nouveau: Cadrage = { ...r, libre: [...r.libre] as [number, number], nom, centre: [c.lng, c.lat] };
+    const k = cadrages.findIndex((x) => x.nom === nom);
+    if (k >= 0) cadrages[k] = nouveau;
+    else cadrages.push(nouveau);
+    ecrireCadrages(cadrages);
+    majCadrages();
+    q<HTMLElement>(".mp-etat").textContent = `Cadrage « ${nom} » enregistré dans ce navigateur.`;
+  });
+  majCadrages();
 
   // --- Export ---------------------------------------------------------------
   const etat = q<HTMLElement>(".mp-etat");

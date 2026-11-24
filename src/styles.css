@@ -727,6 +727,12 @@ body[data-vue="atelier"] { overflow: hidden; }
 .mp-un { font-size: 14px; color: var(--ink); }
 .mp-presets { display: flex; flex-wrap: wrap; gap: 4px; }
 .mp-presets button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.mp-cadrages { display: flex; flex-wrap: wrap; gap: 4px; }
+.mp-cadrages[hidden] { display: none; }
+.mp-cadrage { display: inline-flex; align-items: stretch; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.mp-cadrage button { font-size: 12px; padding: 3px 8px; border: 0; background: none; color: var(--ink); cursor: pointer; }
+.mp-cadrage .mp-suppr { padding: 3px 6px; color: var(--muted); border-left: 1px solid var(--border); }
+.mp-enregistrer { align-self: flex-start; font-size: 12px; padding: 4px 10px; border: 1px dashed var(--border-strong); border-radius: 6px; background: none; color: var(--ink-2); cursor: pointer; }
 .mp-info, .mp-etat { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink-2); }
 .mp-etat:empty { display: none; }
 .mp-actions { display: flex; gap: 8px; }

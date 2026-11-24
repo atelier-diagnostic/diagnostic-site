@@ -34,7 +34,7 @@ export const OPEN_METEO = {
  * par le workflow « Référence climat des villes » et publiées sur la branche
  * « donnees » du dépôt. */
 export const CLIMAT_REFERENCE_URL =
-  "https://raw.githubusercontent.com/esope023/diagnostic-site/donnees/climat-reference.json";
+  "https://raw.githubusercontent.com/atelier-diagnostic/diagnostic-site/donnees/climat-reference.json";
 
 /** Base Adresse Nationale — géocodage FR, servi par la Géoplateforme IGN.
  * Remplace api-adresse.data.gouv.fr (service transféré à l'IGN, ancien

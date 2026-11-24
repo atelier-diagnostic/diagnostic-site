@@ -297,8 +297,8 @@ Deux ajouts légers, sans nouvelle dépendance :
   masque bâti que le diagramme de masques (`svfLabel` donne une lecture
   qualitative : ciel dégagé / semi-encaissé / rue canyon). Valeur au point du
   site, pas une carte ; ne tient compte ni du relief ni de la végétation.
-- **Lien vers l'héliodon historique** (`heliodon.html` du repo
-  `esope023/Analyse`) — extrusion réelle des polygones, ombres portées,
+- **Lien vers l'héliodon historique** (
+  `public/heliodon.html`, servi par ce même site) — extrusion réelle des polygones, ombres portées,
   orthophoto IGN au sol, calque LiDAR HD pour la végétation : bien plus abouti
   visuellement que l'aperçu 3D simplifié intégré (boîtes englobantes, sans
   ombres). Plutôt que dupliquer ce travail, le module Soleil s'y lie avec les

@@ -701,6 +701,12 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         map.addLayer({ id: "cadre-page", type: "line", source: "cadre", filter: ["==", ["get", "role"], "page"], paint: { "line-color": "#1d1d1f", "line-width": 1.5 } });
         map.addLayer({ id: "cadre-ligne", type: "line", source: "cadre", filter: ["==", ["get", "role"], "cadre"], paint: { "line-color": "#1d1d1f", "line-width": 1, "line-dasharray": [3, 2] } });
       }
+      // Le panneau s'ouvre dans le mode de la carte : inclinée → perspective.
+      if (map.getPitch() > 1) {
+        r.vue = "3d";
+        panneau.querySelectorAll("[data-vue]").forEach((x) => x.setAttribute("aria-pressed", String(x.getAttribute("data-vue") === "3d")));
+        q<HTMLElement>(".mp-ch-echelle").hidden = true;
+      }
       if (r.vue === "3d") o.passer3D();
       else {
         for (const id of COUCHES_CADRE) map.setLayoutProperty(id, "visibility", "visible");
@@ -742,14 +748,31 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     q<HTMLElement>(".mp-libre").hidden = v !== "libre";
   });
   segment("data-orient", (v) => (r.paysage = v === "paysage"));
-  segment("data-vue", (v) => {
-    r.vue = v as "plan" | "3d";
+  /** Change le type de vue ; `basculer` : met aussi la carte en 2D ou en 3D. */
+  function choisirVue(v: "plan" | "3d", basculer: boolean): void {
+    r.vue = v;
+    panneau.querySelectorAll("[data-vue]").forEach((x) => x.setAttribute("aria-pressed", String(x.getAttribute("data-vue") === v)));
     q<HTMLElement>(".mp-ch-echelle").hidden = v === "3d";
-    if (v === "3d") o.passer3D();
-    else {
-      o.passer2D();
-      map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
-      setTimeout(cadrer, 450);
+    if (basculer) {
+      if (v === "3d") o.passer3D();
+      else {
+        o.passer2D();
+        map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+        setTimeout(cadrer, 450);
+      }
+    }
+    majCadre();
+  }
+  segment("data-vue", (v) => choisirVue(v as "plan" | "3d", true));
+  // Le panneau suit la carte (retours du 24/11) : carte inclinée (bouton 3D de
+  // l'atelier, clic droit) → perspective ; carte remise à plat → plan à l'échelle.
+  map.on("pitchend", () => {
+    if (panneau.hidden) return;
+    const incline = map.getPitch() > 1;
+    if (incline && r.vue !== "3d") choisirVue("3d", false);
+    else if (!incline && r.vue === "3d") {
+      choisirVue("plan", false);
+      cadrer();
     }
   });
   segment("data-dpi", (v) => (r.dpi = Number(v)));

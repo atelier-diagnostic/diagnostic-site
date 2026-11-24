@@ -9,6 +9,10 @@
 //
 // Vue imprimée : nord en haut, sans inclinaison (2D) ; les arbres y sont des
 // points.
+//
+// SVG à calques (svg-planche.ts, chargé à la demande) : un groupe par couche,
+// vecteurs redessinés et images calées, pour Illustrator ou Inkscape ; en
+// ZIP, un SVG par calque.
 
 import { nordSolaire, encombrement } from "./nord-solaire";
 import maplibregl from "maplibre-gl";
@@ -16,7 +20,7 @@ import { jsPDF } from "jspdf";
 import { creerCoucheArbres3D } from "./arbres3d";
 import type { ArbreOsm } from "../modules/soleil/fetch";
 
-const MERC = 40075016.686; // circonférence équatoriale (m), Web Mercator
+export const MERC = 40075016.686; // circonférence équatoriale (m), Web Mercator
 const TUILE = 2048; // côté d'un morceau rendu hors écran (px)
 const PNG_MAX_PX = 16_000_000; // limite d'image de Safari iOS (~16,7 Mpx)
 
@@ -50,16 +54,18 @@ export interface OptionsMiseEnPage {
   passer3D(): void;
   /** Focale de la caméra 3D (mm, équivalent 24 × 36). */
   focale(): number;
+  /** Couche de l'atelier d'une couche de style (calques de l'export SVG). */
+  calque?(layerId: string): { cle: string; titre: string } | null;
 }
 
 /** Caméra d'une planche en perspective, pour l'habillage. */
-interface Camera3D {
+export interface Camera3D {
   pitch: number;
   bearing: number;
   focale: number;
 }
 
-interface Reglages {
+export interface Reglages {
   format: NomFormat;
   libre: [number, number];
   paysage: boolean;
@@ -71,7 +77,7 @@ interface Reglages {
 }
 
 /** Géométrie de la planche (mm) : page, marges, bandeau, zone carte. */
-function gabarit(r: Reglages) {
+export function gabarit(r: Reglages) {
   const [a, b] = r.format === "libre" ? r.libre : FORMATS[r.format];
   const [w, h] = r.paysage ? [Math.max(a, b), Math.min(a, b)] : [Math.min(a, b), Math.max(a, b)];
   const court = Math.min(w, h);
@@ -83,17 +89,17 @@ function gabarit(r: Reglages) {
   return { w, h, marge, bandeau, carteW: w - 2 * marge, carteH: h - 2 * marge - bandeau - marge / 2 };
 }
 
-const ll2merc = (lon: number, lat: number): [number, number] => [
+export const ll2merc = (lon: number, lat: number): [number, number] => [
   (lon * MERC) / 360,
   (Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) * MERC) / (2 * Math.PI),
 ];
-const merc2ll = (x: number, y: number): [number, number] => [
+export const merc2ll = (x: number, y: number): [number, number] => [
   (x * 360) / MERC,
   (Math.atan(Math.exp((y * 2 * Math.PI) / MERC)) * 360) / Math.PI - 90,
 ];
 
 /** Emprise au sol de la zone carte, en mètres Mercator, centrée sur `centre`. */
-function emprise(r: Reglages, centre: maplibregl.LngLat) {
+export function emprise(r: Reglages, centre: maplibregl.LngLat) {
   const g = gabarit(r);
   const k = 1 / Math.cos((centre.lat * Math.PI) / 180); // dilatation Mercator
   const [cx, cy] = ll2merc(centre.lng, centre.lat);
@@ -162,14 +168,15 @@ function empriseFeuille(r: Reglages, centre: maplibregl.LngLat) {
 }
 
 /** Longueur « ronde » de l'échelle graphique (m) pour environ `cible` mètres. */
-function longueurRonde(cible: number): number {
+export function longueurRonde(cible: number): number {
   const p = Math.pow(10, Math.floor(Math.log10(cible)));
   for (const f of [5, 2, 1]) if (f * p <= cible) return f * p;
   return p;
 }
 
-/** Rend la carte à l'emprise demandée, morceau par morceau. */
-async function rendre(
+/** Rend la carte à l'emprise demandée, morceau par morceau. `garder` : ne
+ * dessine que ces couches (calques séparés de l'export SVG, fond transparent). */
+export async function rendre(
   arbres: { arbres: ArbreOsm[]; lat0: number; lon0: number } | null,
   map: maplibregl.Map,
   r: Reglages,
@@ -178,12 +185,13 @@ async function rendre(
   pxH: number,
   surMorceau: (img: HTMLCanvasElement, x: number, y: number) => void,
   progres: (fait: number, total: number) => void,
+  garder?: (l: maplibregl.LayerSpecification) => boolean,
 ): Promise<void> {
   const e = emprise(r, centre);
   const mppMerc = e.larg / pxW;
   const zoom = Math.log2(MERC / (512 * mppMerc));
   const style = map.getStyle();
-  style.layers = style.layers.filter((l) => (l.type as string) !== "custom" && !l.id.startsWith("cadre-"));
+  style.layers = style.layers.filter((l) => (l.type as string) !== "custom" && !l.id.startsWith("cadre-") && (!garder || garder(l)));
   delete (style.sources as Record<string, unknown>)["cadre"];
   // Planche en plan : pas de terrain 3D (l'ombrage du relief reste).
   delete (style as { terrain?: unknown }).terrain;
@@ -624,6 +632,10 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
       <button type="button" class="btn-primary mp-pdf">Exporter en PDF</button>
       <button type="button" class="btn-secondary mp-png">PNG</button>
     </div>
+    <div class="mp-actions mp-actions-svg">
+      <button type="button" class="btn-secondary mp-svg" title="Un seul fichier : un groupe par couche, vecteurs et images calées, à l'échelle (Illustrator, Inkscape)">SVG à calques</button>
+      <button type="button" class="btn-secondary mp-zip" title="Archive ZIP : un SVG par couche, tous à la même page, à superposer">Un SVG par calque</button>
+    </div>
     <p class="mp-etat" aria-live="polite"></p>`;
   carte.appendChild(panneau);
   const q = <T extends HTMLElement>(s: string) => panneau.querySelector<T>(s)!;
@@ -871,7 +883,7 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
 
   // --- Export ---------------------------------------------------------------
   const etat = q<HTMLElement>(".mp-etat");
-  const boutons = [q<HTMLButtonElement>(".mp-pdf"), q<HTMLButtonElement>(".mp-png")];
+  const boutons = [q<HTMLButtonElement>(".mp-pdf"), q<HTMLButtonElement>(".mp-png"), q<HTMLButtonElement>(".mp-svg"), q<HTMLButtonElement>(".mp-zip")];
   const nomFichier = (ext: string) =>
     `${(r.titre || "plan").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "plan"}_1-${r.echelle}.${ext}`;
 
@@ -914,7 +926,7 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
     }
   }
 
-  async function exporter(type: "pdf" | "png"): Promise<void> {
+  async function exporter(type: "pdf" | "png" | "svg" | "zip"): Promise<void> {
     const g = gabarit(r);
     const centre = centreCarte();
     const e = emprise(r, centre);
@@ -942,6 +954,23 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
         const cap = await capturer3D(pxW);
         vue3d = cap.img;
         dpi = Math.min(dpi, cap.dpiObtenu);
+      }
+      if (type === "svg" || type === "zip") {
+        const { exporterSvg } = await import("./svg-planche");
+        const res = await exporterSvg({
+          map, r, centre, legende, site, lat, cam, vue3d,
+          arbres: o.arbres3d(),
+          calque: o.calque ?? (() => null),
+          progres: (t) => (etat.textContent = t),
+          zip: type === "zip",
+        });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(res.blob);
+        a.download = nomFichier(res.ext);
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        etat.textContent = `Export ${res.ext === "zip" ? "ZIP (un SVG par calque)" : "SVG à calques"} terminé${res.note ? ` : ${res.note}` : ""}.`;
+        return;
       }
       if (type === "pdf") {
         const doc = new jsPDF({ orientation: g.w > g.h ? "landscape" : "portrait", unit: "mm", format: [g.w, g.h], compress: true });
@@ -985,4 +1014,6 @@ export function brancherMiseEnPage(o: OptionsMiseEnPage): void {
   }
   boutons[0].addEventListener("click", () => void exporter("pdf"));
   boutons[1].addEventListener("click", () => void exporter("png"));
+  boutons[2].addEventListener("click", () => void exporter("svg"));
+  boutons[3].addEventListener("click", () => void exporter("zip"));
 }

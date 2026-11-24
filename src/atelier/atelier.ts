@@ -2403,6 +2403,24 @@ export function createAtelier(root: HTMLElement): Atelier {
       if (!mode3d) q<HTMLButtonElement>('.at-mode button[data-mode="3d"]').click();
     },
     focale: () => focale,
+    // Calques de l'export SVG : une couche de l'atelier = un calque nommé.
+    calque: (lid) => {
+      if (lid === "fond-uni") return { cle: "fond-uni", titre: "Fond — teinte" };
+      if (lid === "fond-plan") return { cle: "fond-plan", titre: "Fond — Plan IGN" };
+      if (lid === "fond-photo") return { cle: "fond-photo", titre: "Fond — photo aérienne" };
+      const ign = couchesIgn?.find((c) => c.layer.id === lid);
+      if (ign) {
+        const t = THEMES_IGN.find((x) => x.id === ign.theme)!;
+        return { cle: `ign-${t.id}`, titre: `Fond composé — ${t.titre}` };
+      }
+      if (lid === "ombres-arbres") return { cle: "ombres", titre: "Ombres des arbres" };
+      if (lid.startsWith("coupe-")) return { cle: "coupe", titre: "Coupe de terrain" };
+      const c = COUCHES.find((x) => x.id === lid || couchesMap(x.id).includes(lid));
+      if (!c) return null;
+      if (c.id === "bati") return { cle: "bati", titre: coloration === "hauteur" ? "Bâtiments par hauteur" : coloration === "usage" ? "Bâtiments par usage" : "Bâtiments" };
+      if (c.id === "cadastre" && lid === "cadastre-numeros") return { cle: "cadastre-numeros", titre: "Cadastre — numéros" };
+      return { cle: c.id, titre: c.id === "cosia" ? `CoSIA ${millesime}` : c.titre };
+    },
     legende: () => {
       const items: ElementLegende[] = [];
       for (const c of COUCHES) {

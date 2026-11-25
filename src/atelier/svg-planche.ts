@@ -24,8 +24,9 @@ import {
   type Reglages, type Camera3D, type ElementLegende,
 } from "./mise-en-page";
 import type { ArbreOsm } from "../modules/soleil/fetch";
+import { gabaritArbre, arbresADessiner } from "./arbres3d";
 import {
-  eclater, typeDeBase, n2, echapper, fabriqueIds, tracePolyligne, tracePolygone, ouvrirCalque, couleur, evaluateur, nombre,
+  eclater, typeDeBase, dansRect, KMM as KMM_HAB, n2, echapper, fabriqueIds, tracePolyligne, tracePolygone, ouvrirCalque, couleur, evaluateur, nombre,
   zipper, dessinerCouche, opa, type Pt, type Rect, type EntiteStyle, type EntitePage, type CoucheStyle,
 } from "./svg-outils";
 
@@ -316,15 +317,23 @@ export async function exporterSvg(c: ContexteSvg): Promise<{ blob: Blob; ext: "s
     c.progres("Image de la vue 3D…");
     calques.push({ cle: "vue-3d", titre: "Vue 3D", genre: "raster", couches: [], contenu: [image(await enDataUrl(c.vue3d))] });
   } else {
-    // 1. Répartition des couches de style visibles en calques, dans l'ordre de dessin.
+    // 1. Répartition des couches visibles en calques, dans l'ordre de dessin.
+    // L'ordre vient de la carte : getStyle() omet les couches 3D (« custom »),
+    // dont les arbres en volume.
     const style = map.getStyle();
-    for (const l of style.layers as CoucheStyle[]) {
-      if (l.id.startsWith("cadre-") || !visible(l)) continue;
-      const type = l.type as string;
-      if (type === "custom") {
-        if (l.id === "arbres-3d" && c.arbres) calques.push({ cle: "arbres-3d", titre: "Arbres (volumes)", genre: "arbres", couches: [], contenu: [] });
+    const specs = new Map((style.layers as CoucheStyle[]).map((l) => [l.id, l]));
+    for (const lid of map.getLayersOrder()) {
+      if (lid === "arbres-3d") {
+        if (c.arbres && map.getLayoutProperty(lid, "visibility") !== "none") {
+          calques.push({ cle: "arbres-3d", titre: "Arbres (volumes)", genre: "arbres", couches: [], contenu: [] });
+          calques.push({ cle: "arbres-houppiers", titre: "Arbres — houppiers", genre: "vecteur", couches: [], contenu: [] });
+        }
         continue;
       }
+      const l = specs.get(lid);
+      if (!l || l.id.startsWith("cadre-") || !visible(l)) continue;
+      const type = l.type as string;
+      if (type === "custom") continue;
       if (type === "fill-extrusion" || type === "heatmap") continue;
       if (type !== "raster" && type !== "hillshade" && type !== "background" && type !== "color-relief") {
         if ((l.minzoom !== undefined && zoomRef < l.minzoom) || (l.maxzoom !== undefined && zoomRef >= l.maxzoom)) continue;
@@ -362,6 +371,19 @@ export async function exporterSvg(c: ContexteSvg): Promise<{ blob: Blob; ext: "s
         points: e.points.map(([x, y]) => versPage(x, y)),
       };
     };
+    // Houppiers des arbres en volume : un disque au diamètre réel (mesuré par
+    // le LiDAR, renseigné dans OSM ou générique), mêmes arbres que la 3D.
+    const mmParM = 1000 / r.echelle;
+    const houppiers = (a: NonNullable<ContexteSvg["arbres"]>) => {
+      const cercles: string[] = [];
+      for (const arbre of arbresADessiner(a.arbres, a.lat0, a.lon0)) {
+        const p = versPage(arbre.lon, arbre.lat);
+        if (!dansRect(p, zone)) continue;
+        const gb = gabaritArbre(arbre);
+        cercles.push(`<circle cx="${n2(p[0])}" cy="${n2(p[1])}" r="${n2(Math.max(0.1, gb.rayon * mmParM))}" fill="${gb.resineux ? "#2f6b2a" : "#3a7a30"}" fill-opacity="0.85" stroke="#ffffff" stroke-opacity="0.9" stroke-width="${n2(KMM_HAB)}"/>`);
+      }
+      return cercles.length ? `${ouvrirCalque(ids("Arbres · houppiers"), "houppiers", false)}\n${cercles.join("\n")}\n</g>` : "";
+    };
     const horsZone = (geo: EntitePage["geo"]) => {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       const voir = (p: Pt) => {
@@ -377,6 +399,7 @@ export async function exporterSvg(c: ContexteSvg): Promise<{ blob: Blob; ext: "s
     };
     for (const cq of calques.filter((x) => x.genre === "vecteur")) {
       c.progres(`Vecteurs : ${cq.titre}…`);
+      if (cq.cle === "arbres-houppiers" && c.arbres) cq.contenu.push(houppiers(c.arbres));
       for (const l of cq.couches) {
         let contenu = "";
         if (l.type === "background") {

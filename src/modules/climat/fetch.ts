@@ -55,7 +55,7 @@ export async function fetchClimat(ctx: SiteContext): Promise<ClimatRaw> {
 // les indicateurs nous-mêmes (voir compute.ts). Chaque requête est mise en
 // cache longtemps : coût payé une fois par site, pas à chaque visite.
 //
-// Modèles retenus : les 3 avec couverture température complète (voir tableau
+// Modèles retenus : les 3 avec couverture température et pluie complète (voir tableau
 // Open-Meteo) et origines diverses, pour un ensemble simplifié — pas les 7
 // modèles disponibles, pour limiter le volume de données côté navigateur.
 // L'API ne propose pas de scénario d'émission au choix : elle est calée sur
@@ -82,7 +82,9 @@ async function fetchProjectionModel(
   model: string,
   window: ProjectionWindow,
 ): Promise<DailyTemperatureBlock> {
-  const daily = "temperature_2m_max,temperature_2m_min,temperature_2m_mean";
+  // Pluies journalières demandées aussi : disponibles pour les 3 modèles
+  // retenus (tableau Open-Meteo, vérifié le 26/11/2026).
+  const daily = "temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum";
   const url =
     `${OPEN_METEO.climate}?latitude=${ctx.lat}&longitude=${ctx.lon}` +
     `&start_date=${window.start}&end_date=${window.end}` +
@@ -91,7 +93,7 @@ async function fetchProjectionModel(
   // Comme l'API archive, les séries journalières sont imbriquées sous "daily",
   // pas à la racine de la réponse.
   const { daily: block } = await fetchJson<{ daily: DailyTemperatureBlock }>(url, {
-    cacheKey: `open-meteo:climate-${model}-${window.id}`,
+    cacheKey: `open-meteo:climate-v2-${model}-${window.id}`, // v2 : ajout des pluies,
     ttlMs: 365 * 24 * 60 * 60 * 1000, // projections CMIP6 : ne changent pas d'une visite à l'autre
     timeoutMs: 90_000, // série de 60 ans : réponse lourde
   });
@@ -134,6 +136,9 @@ function slice(block: DailyTemperatureBlock, w: ProjectionWindow): DailyTemperat
     temperature_2m_max: idx.map((i) => block.temperature_2m_max[i]),
     temperature_2m_min: idx.map((i) => block.temperature_2m_min[i]),
     temperature_2m_mean: idx.map((i) => block.temperature_2m_mean[i]),
+    ...(block.precipitation_sum
+      ? { precipitation_sum: idx.map((i) => block.precipitation_sum![i]) }
+      : {}),
   };
 }
 

@@ -42,7 +42,14 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
         `(${p.deltaTemp > 0 ? "+" : ""}${p.deltaTemp} °C ; ${p.fourchette.tMoyenneAnnuelle.min} à ${p.fourchette.tMoyenneAnnuelle.max} °C selon les modèles), nuits tropicales ` +
         `${p.indicators.nuitsTropicales} j/an (${pct(p.pctNuitsTropicales)} ; ${p.fourchette.nuitsTropicales.min} à ${p.fourchette.nuitsTropicales.max}), ` +
         `jours ≥ 30 °C ${p.indicators.joursChaleur30} j/an (${pct(p.pctJours30)} ; ${p.fourchette.joursChaleur30.min} à ${p.fourchette.joursChaleur30.max}), ` +
-        `vagues de chaleur ${p.indicators.vaguesChaleur}/an (${pct(p.pctVagues)}).`
+        `vagues de chaleur ${p.indicators.vaguesChaleur}/an (${pct(p.pctVagues)}).` +
+        (p.pluies.length
+          ? " Pluies : " +
+            p.pluies
+              .map((s) => `${s.label.toLowerCase()} ${s.valeur} mm (${s.pct > 0 ? "+" : ""}${s.pct} % ; modèles ${s.pctMin > 0 ? "+" : ""}${s.pctMin} à ${s.pctMax > 0 ? "+" : ""}${s.pctMax} %)`)
+              .join(", ") +
+            "."
+          : "")
       );
     });
 
@@ -75,6 +82,14 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
         { label: "Nuits tropicales / an", value: `${result.nuitsTropicales}` },
         { label: "Jours ≥ 30 °C / an", value: `${result.joursChaleur30}` },
         { label: "Jours ≥ 35 °C / an", value: `${result.joursChaleur35}` },
+        ...result.projections.flatMap((p) =>
+          p.pluies
+            .filter((s) => s.id === "ete" || s.id === "hiver")
+            .map((s) => ({
+              label: `Pluies ${s.id === "ete" ? "d'été" : "d'hiver"} — ${p.label}`,
+              value: `${s.valeur} mm (${s.pct > 0 ? "+" : ""}${s.pct} % ; modèles ${s.pctMin > 0 ? "+" : ""}${s.pctMin} à ${s.pctMax > 0 ? "+" : ""}${s.pctMax} %)`,
+            })),
+        ),
         ...result.projections.map((p) => ({
           label: `Temp. moyenne — ${p.label}`,
           value: `${p.indicators.tMoyenneAnnuelle} °C (${p.deltaTemp > 0 ? "+" : ""}${p.deltaTemp} °C)`,
@@ -94,19 +109,24 @@ export const climatModule: DiagnosticModule<ClimatModuleRaw, ClimatResult> = {
       ],
       notes: [
         "Köppen-Geiger calculé sur les normales du site (critères de Peel et al. 2007 : mois le plus froid à 0 °C, été d'avril à septembre) ; " +
-          "glissement aux horizons futurs avec les températures projetées mois par mois, pluies supposées inchangées (l'API ne fournit pas les pluies futures).",
+          "glissement aux horizons futurs avec les températures projetées mois par mois, pluies laissées à leurs normales pour ce classement (leur évolution, très incertaine, est donnée à part par saison).",
         "Mois secs au sens de Gaussen (P < 2T) ; continentalité de Gorczyński ; bilan hydrique P − ETP (ETP de référence FAO-56).",
         "Référence : Open-Meteo (réanalyse ERA5), période 1991-2020.",
         "DJU base 18 °C ; vague de chaleur simplifiée (≥ 3 j consécutifs Tmax ≥ 30 °C).",
         "Projections : Open-Meteo Climate API (CMIP6), moyenne d'un ensemble simplifié " +
-          "de 3 modèles (couverture température complète). Pas de choix de scénario " +
+          "de 3 modèles (couverture température et pluie complète). Pas de choix de scénario " +
           "d'émission possible : trajectoire proche de RCP8.5 jusqu'en 2050.",
         "Horizon 2050 = fin de la période disponible dans l'API (données jusqu'à 2050), " +
           "pas une valeur ponctuelle à cette date.",
         "Méthode des écarts : pour chaque modèle, écart entre l'horizon et sa propre " +
           "période 1991-2020, ajouté aux observations ERA5 ; la fourchette donne les valeurs " +
-          "minimale et maximale entre modèles. Horizons à rapprocher de la trajectoire de " +
-          "référence française (TRACC) : +2 °C en 2030, +2,7 °C en 2050.",
+          "minimale et maximale entre modèles. Pluies : même méthode, en proportion (rapport " +
+          "horizon / référence du modèle appliqué aux pluies observées).",
+        "Horizons définis par périodes et scénario élevé, et non par niveaux de réchauffement : " +
+          "proches, sans s'y confondre, de la trajectoire de référence française (TRACC : +2 °C en 2030, " +
+          "+2,7 °C en 2050 en France). Référence officielle : Météo-France, Climadiag Commune " +
+          "(référence 1976-2005, grille SAFRAN 8 km, ensemble de modèles régionaux corrigés, médiane) ; " +
+          "ses comptages absolus peuvent différer de cette fiche, les hausses sont comparables.",
         ...projectionNotes,
       ],
     };

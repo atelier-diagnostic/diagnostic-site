@@ -294,3 +294,64 @@ export function bandes(obs: AnneeObservee[] | null | undefined): string {
     à ${depuis - 1}. Entre ${debut[0].annee}-${debut[debut.length - 1].annee} et
     ${fin[0].annee}-${fin[fin.length - 1].annee}, le site s'est réchauffé de <strong>${signe(gain, 1)} °C</strong>.</p>`;
 }
+
+// --- Pluies par saison --------------------------------------------------------------
+
+/**
+ * Tableau des pluies par saison : 1991-2020 observé, puis chaque horizon
+ * (méthode des écarts en %). L'écart moyen est donné avec l'écart des modèles
+ * extrêmes : sur les pluies, les modèles divergent souvent jusqu'au signe.
+ */
+export function pluies(r: ClimatResult): string {
+  const horizons = r.projections.filter((p) => p.pluies.length > 0);
+  if (horizons.length === 0) {
+    return `<p class="module-note">Pluies futures indisponibles (aucun modèle n'a fourni de série de pluie complète).
+    Ce n'est pas une absence d'évolution.</p>`;
+  }
+  const ids = horizons[0].pluies.map((s) => s.id);
+  const cellule = (p: ProjectionHorizon, id: string) => {
+    const s = p.pluies.find((x) => x.id === id);
+    if (!s) return `<td>n.d.</td>`;
+    const ecart = s.pctMin === s.pctMax ? "" : `<br><span class="range">modèles : ${signe(s.pctMin)} à ${signe(s.pctMax)} %</span>`;
+    return `<td><strong>${fr(s.valeur)} mm</strong> (${signe(s.pct)} %)${ecart}</td>`;
+  };
+  const divergent = horizons.some((p) => p.pluies.some((s) => s.pctMin < 0 && s.pctMax > 0));
+  return `<table class="reg-table pluies-table">
+      <thead><tr><th>Saison</th><th>1991-2020</th>${horizons.map((p) => `<th>${p.id === "2050" ? "Horizon 2050" : "Horizon 2030"}</th>`).join("")}</tr></thead>
+      <tbody>${ids
+        .map((id) => {
+          const s0 = horizons[0].pluies.find((x) => x.id === id)!;
+          return `<tr><th>${s0.label}</th><td>${fr(s0.base)} mm</td>${horizons.map((p) => cellule(p, id)).join("")}</tr>`;
+        })
+        .join("")}</tbody>
+    </table>
+    <p class="module-note">Cumuls moyens. Pour chaque modèle, rapport entre l'horizon et sa propre période 1991-2020,
+    appliqué aux pluies observées (ERA5).${
+      divergent
+        ? " <strong>Les modèles ne s'accordent pas sur le sens de l'évolution</strong> pour au moins une saison : la tendance moyenne est alors à prendre comme indicative."
+        : ""
+    } Les modèles mondiaux restent peu fiables sur les pluies, en particulier les épisodes intenses méditerranéens,
+    non traités ici.</p>`;
+}
+
+// --- Repère Météo-France (Climadiag Commune) ----------------------------------------
+
+/**
+ * Renvoi vers la référence officielle. Pas de valeurs reprises : Climadiag
+ * Commune n'a pas d'API ouverte. On explique pourquoi ses chiffres diffèrent
+ * de ceux de la fiche (comparaison faite à Marseille le 26/11/2026 :
+ * températures cohérentes, nuits chaudes ~20 de moins ici, même hausse).
+ */
+export function repereClimadiag(r: ClimatResult): string {
+  const insee = r.site.insee ? ` (commune ${r.site.insee})` : "";
+  return `<div class="repere-officiel">
+    <p><strong>Référence officielle : Météo-France, Climadiag Commune</strong>${insee}.
+    <a href="https://meteofrance.com/climadiag-commune" target="_blank" rel="noopener">Ouvrir la fiche de la commune ↗</a></p>
+    <p class="module-note">C'est le chiffre que citeront les documents de planification. Il diffère de cette fiche par construction :
+    niveaux de réchauffement de la TRACC (+2 °C en 2030, +2,7 °C en 2050 en France) plutôt que périodes de dates,
+    référence 1976-2005 plutôt que 1991-2020, grille SAFRAN de 8 km et ensemble de modèles régionaux corrigés (médiane)
+    plutôt que 3 modèles mondiaux (moyenne). Les hausses sont comparables ; les comptages absolus, surtout les nuits
+    tropicales, dépendent beaucoup de la maille. Aucune des deux sources ne rend l'îlot de chaleur urbain.
+    Climadiag donne aussi le risque de feu et, sur le littoral, l'élévation du niveau de la mer.</p>
+  </div>`;
+}

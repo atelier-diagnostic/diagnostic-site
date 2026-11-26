@@ -53,6 +53,8 @@ export interface DailyTemperatureBlock {
   temperature_2m_max: number[];
   temperature_2m_min: number[];
   temperature_2m_mean: number[];
+  /** Pluie journalière (mm) ; absente des séries de référence des villes. */
+  precipitation_sum?: number[];
 }
 
 const monthOf = (isoDate: string): number => Number(isoDate.slice(5, 7)) - 1;
@@ -281,6 +283,93 @@ export interface ProjectionHorizon {
   pctVagues: number | null;
   pctDjuChauffage: number | null;
   pctDjuClim: number | null;
+  /** Pluies par saison (méthode des écarts en %), vide si aucun modèle n'a fourni les pluies. */
+  pluies: PluieSaison[];
+}
+
+export type SaisonId = "annee" | "hiver" | "printemps" | "ete" | "automne";
+
+export interface PluieSaison {
+  id: SaisonId;
+  label: string;
+  /** Cumul moyen observé 1991-2020 (ERA5, mm). */
+  base: number;
+  /** Cumul projeté, moyenne des modèles (mm). */
+  valeur: number;
+  /** Écart en % (moyenne des écarts des modèles). */
+  pct: number;
+  /** Fourchette entre modèles (mm). */
+  fourchette: Fourchette;
+  /** Écart en % du modèle le plus sec et du plus humide. */
+  pctMin: number;
+  pctMax: number;
+}
+
+/** Saisons météorologiques (index de mois, 0 = janvier). */
+export const SAISONS: { id: SaisonId; label: string; mois: number[] }[] = [
+  { id: "annee", label: "Année", mois: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+  { id: "hiver", label: "Hiver (déc.-fév.)", mois: [11, 0, 1] },
+  { id: "printemps", label: "Printemps (mars-mai)", mois: [2, 3, 4] },
+  { id: "ete", label: "Été (juin-août)", mois: [5, 6, 7] },
+  { id: "automne", label: "Automne (sept.-nov.)", mois: [8, 9, 10] },
+];
+
+/** Cumul moyen par mois (mm/an) d'une série journalière de pluie ; null si absente ou trop lacunaire. */
+function pluieMensuelle(b: DailyTemperatureBlock): number[] | null {
+  const p = b.precipitation_sum;
+  if (!p || p.length === 0) return null;
+  const sum = new Array(12).fill(0);
+  let valides = 0;
+  b.time.forEach((t, i) => {
+    const v = p[i];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      sum[monthOf(t)] += v;
+      valides++;
+    }
+  });
+  if (valides < 0.9 * p.length) return null;
+  const years = new Set(b.time.map((t) => t.slice(0, 4))).size || 1;
+  return sum.map((s) => s / years);
+}
+
+/**
+ * Pluies par saison, méthode des écarts en proportion : pour chaque modèle,
+ * rapport horizon / sa propre référence 1991-2020, appliqué au cumul observé.
+ * Un rapport (et non une différence) évite les cumuls négatifs et respecte le
+ * régime de pluie du site. Les modèles mondiaux restent peu fiables sur les
+ * pluies méditerranéennes : la fourchette est donc affichée telle quelle.
+ */
+function pluiesSaisonnieres(
+  complets: { future: DailyTemperatureBlock; reference: DailyTemperatureBlock }[],
+  baseMensuelle: number[],
+): PluieSaison[] {
+  const parModele = complets
+    .map((m) => ({ fut: pluieMensuelle(m.future), ref: pluieMensuelle(m.reference) }))
+    .filter((m): m is { fut: number[]; ref: number[] } => m.fut !== null && m.ref !== null);
+  if (parModele.length === 0) return [];
+  const somme = (v: number[], mois: number[]) => mois.reduce((a, k) => a + v[k], 0);
+  return SAISONS.map((s) => {
+    const base = somme(baseMensuelle, s.mois);
+    const rapports = parModele
+      .map((m) => {
+        const ref = somme(m.ref, s.mois);
+        return ref > 0 ? somme(m.fut, s.mois) / ref : null;
+      })
+      .filter((r): r is number => r !== null);
+    if (rapports.length === 0 || base <= 0) return null;
+    const valeurs = rapports.map((r) => base * r);
+    const pcts = rapports.map((r) => (r - 1) * 100);
+    return {
+      id: s.id,
+      label: s.label,
+      base: Math.round(base),
+      valeur: Math.round(mean(valeurs)),
+      pct: Math.round(mean(pcts)),
+      fourchette: { min: Math.round(Math.min(...valeurs)), max: Math.round(Math.max(...valeurs)) },
+      pctMin: Math.round(Math.min(...pcts)),
+      pctMax: Math.round(Math.max(...pcts)),
+    };
+  }).filter((p): p is PluieSaison => p !== null);
 }
 
 function pctChange(base: number, future: number): number | null {
@@ -310,7 +399,7 @@ export function computeProjectionHorizon(
   id: string,
   label: string,
   perModel: ModelSeries[],
-  baseline: TemperatureIndicators & { nuitsParMois: number[] },
+  baseline: TemperatureIndicators & { nuitsParMois: number[]; monthly: { precip: number[] } },
 ): ProjectionHorizon {
   const complets = perModel.filter(
     (m): m is ModelSeries & { reference: DailyTemperatureBlock } => m.reference !== null,
@@ -381,5 +470,6 @@ export function computeProjectionHorizon(
     pctVagues: pctChange(baseline.vaguesChaleur, indicators.vaguesChaleur),
     pctDjuChauffage: pctChange(baseline.djuChauffage, indicators.djuChauffage),
     pctDjuClim: pctChange(baseline.djuClim, indicators.djuClim),
+    pluies: pluiesSaisonnieres(complets, baseline.monthly.precip),
   };
 }

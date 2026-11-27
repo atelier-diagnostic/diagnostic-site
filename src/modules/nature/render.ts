@@ -4,6 +4,7 @@
 import type { NatureResult } from "./compute";
 import { COEF_CBS, CLASSES_COSIA } from "../../core/cosia";
 import { CLASSES_HAUTEUR } from "../../core/canopee-lidar";
+import { tableDeuxEchelles, entetePerimetre } from "../../ui/deux-echelles";
 
 function indicator(label: string, value: string, sous = ""): string {
   return `<div class="indicator">${sous ? `<span class="ind-sous">${sous}</span>` : ""}<span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
@@ -45,6 +46,30 @@ function blocSol(r: NatureResult): string {
     Coefficient de biotope indicatif, sur le seul sol vu d'avion : coefficient 0 pour ${coefs["0"]?.join(", ")} ;
     0,5 pour les zones perméables (gravier, stabilisé) ; 1 pour la pleine terre (${coefs["1"]?.join(", ")}).
     Les toitures et murs végétalisés ne sont pas détectés ; le CBS réglementaire du PLU se calcule à la parcelle, sur plan.</p>`;
+}
+
+/** Les mêmes indicateurs de sol sur le périmètre de projet et sur le rayon. */
+function blocDeuxEchelles(r: NatureResult): string {
+  if (!r.avecPerimetre) return "";
+  const p = r.solPerimetre;
+  if (!p)
+    return `<p class="error">Couverture du sol non mesurée sur le périmètre de projet (CoSIA indisponible ou contour non couvert).
+      Ce n'est pas une absence de sols imperméabilisés.</p>`;
+  const s = r.sol;
+  const pc = (v: number | undefined) => (v === undefined ? "n.d." : `${fr(v)} %`);
+  return `${tableDeuxEchelles(
+    [
+      { label: "Sols imperméabilisés", perimetre: pc(p.impermeabilisePct), rayon: pc(s?.impermeabilisePct) },
+      { label: "Pleine terre", perimetre: pc(p.pleineTerrePct), rayon: pc(s?.pleineTerrePct) },
+      { label: "Végétalisé", perimetre: pc(p.vegetalisePct), rayon: pc(s?.vegetalisePct) },
+      { label: "Canopée (vue d'avion)", perimetre: pc(p.canopeePct), rayon: pc(s?.canopeePct) },
+      { label: "Coefficient de biotope (indicatif)", perimetre: fr(p.cbs, 2), rayon: s ? fr(s.cbs, 2) : "n.d." },
+    ],
+    entetePerimetre(p.surfaceM2),
+    `Rayon ${r.effectiveRadiusM} m`,
+  )}
+  <p class="module-note">Périmètre de projet : pixels CoSIA (${p.millesime}) retenus à l'intérieur du contour des parcelles
+  (${p.couverturePct} % couvert). Détail par classe ci-dessous : rayon d'analyse.</p>`;
 }
 
 function blocCanopee(r: NatureResult): string {
@@ -98,7 +123,7 @@ export function renderNature(el: HTMLElement, r: NatureResult): void {
     : r.protectedZones.length > 0
       ? `<ul class="reg-list">${r.protectedZones.map((z) => `<li>${z.label}${z.siteName ? ` — ${z.siteName}` : ""}</li>`).join("")}</ul>`
       : `<p class="module-note">Aucun zonage de protection (Natura 2000, ZNIEFF, réserve, parc)
-         détecté sur ce point précis.</p>`;
+         détecté ${r.protectionsSurPerimetre ? "sur le périmètre de projet" : "sur ce point précis"}.</p>`;
 
   const osm = r.fetchFailed
     ? `<p class="error">OpenStreetMap (Overpass) n'a pas répondu : arbres isolés non comptés. Réessayer plus tard.</p>`
@@ -110,6 +135,7 @@ export function renderNature(el: HTMLElement, r: NatureResult): void {
 
   el.innerHTML = `
     <h3 class="module-subtitle">Couverture du sol</h3>
+    ${blocDeuxEchelles(r)}
     ${blocSol(r)}
     <h3 class="module-subtitle">Canopée mesurée (LiDAR HD)</h3>
     ${blocCanopee(r)}
@@ -119,8 +145,11 @@ export function renderNature(el: HTMLElement, r: NatureResult): void {
     ${osm}
     <h3 class="module-subtitle">Zonages de protection réglementaires</h3>
     ${protectionBlock}
-    <p class="module-note">Source : API Carto (module Nature, IGN/INPN). Vérifié sur le point
-    précis recherché, pas sur l'ensemble du rayon "quartier" — une zone protégée peut commencer
-    juste en dehors du point sans apparaître ici.</p>
+    <p class="module-note">Source : API Carto (module Nature, IGN/INPN). ${
+      r.protectionsSurPerimetre
+        ? "Zonages qui touchent le périmètre de projet, pas l'ensemble du rayon."
+        : `Vérifié sur le point précis recherché, pas sur l'ensemble du rayon "quartier" — une zone protégée peut commencer
+    juste en dehors du point sans apparaître ici.`
+    }</p>
   `;
 }

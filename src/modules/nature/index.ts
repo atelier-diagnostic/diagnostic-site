@@ -17,8 +17,8 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
     return fetchNature(ctx);
   },
 
-  compute(raw: NatureRaw) {
-    return computeNature(raw);
+  compute(raw: NatureRaw, ctx: SiteContext) {
+    return computeNature(raw, ctx);
   },
 
   render(el: HTMLElement, result: NatureResult) {
@@ -33,6 +33,18 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
       : result.protectedZones.length > 0
         ? `${result.protectedZones.length} zonage(s) de protection sur le point (${result.protectedZones.map((z) => z.label).join(", ")}).`
         : "Aucun zonage de protection détecté sur le point.";
+    const sp = result.solPerimetre;
+    const indicateursPerimetre = sp
+      ? [
+          { label: "Périmètre de projet — sols imperméabilisés (CoSIA)", value: `${sp.impermeabilisePct} %` },
+          { label: "Périmètre de projet — pleine terre", value: `${sp.pleineTerrePct} %` },
+          { label: "Périmètre de projet — végétalisé", value: `${sp.vegetalisePct} %` },
+          { label: "Périmètre de projet — canopée", value: `${sp.canopeePct} %` },
+          { label: "Périmètre de projet — coefficient de biotope (indicatif)", value: `${sp.cbs}` },
+        ]
+      : result.avecPerimetre
+        ? [{ label: "Périmètre de projet — couverture du sol", value: "n.d. (CoSIA indisponible)" }]
+        : [];
     const indicators = sol
       ? [
           { label: "Sols imperméabilisés (CoSIA)", value: `${sol.impermeabilisePct} %` },
@@ -45,6 +57,7 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
           { label: "Surface végétalisée (OSM)", value: `${result.greenPct} %` },
           { label: "Canopée (bois/forêt, OSM)", value: `${result.canopyPct} %` },
         ];
+    indicators.unshift(...indicateursPerimetre);
     const l = result.lidar;
     if (l)
       indicators.push(
@@ -67,6 +80,9 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
       moduleId: "nature",
       title: "Nature",
       summary:
+        (sp
+          ? `Sur le périmètre de projet : ${sp.impermeabilisePct} % de sols imperméabilisés, ${sp.pleineTerrePct} % de pleine terre, canopée ${sp.canopeePct} %, coefficient de biotope indicatif ${sp.cbs}. `
+          : "") +
         (sol
           ? `Dans un rayon de ${result.effectiveRadiusM} m : ${sol.impermeabilisePct} % de sols imperméabilisés, ` +
             `${sol.vegetalisePct} % végétalisés, canopée ${sol.canopeePct} %, coefficient de biotope indicatif ${sol.cbs}. `
@@ -82,7 +98,10 @@ export const natureModule: DiagnosticModule<NatureRaw, NatureResult> = {
           : "Canopée LiDAR non mesurée (LiDAR HD non publié ici ou indisponible).",
         "Coefficient de biotope indicatif : 0 bâti et sols imperméables, 0,5 zones perméables, 1 pleine terre ; toitures et murs végétalisés non détectés.",
         "Règle 3-30-300 : le critère des 3 arbres visibles depuis chaque logement n'est pas évaluable ici.",
-        "Zonages de protection (Natura 2000, ZNIEFF, réserves, parcs) : source API Carto IGN/INPN, vérifiée sur le point précis.",
+        result.protectionsSurPerimetre
+          ? "Zonages de protection (Natura 2000, ZNIEFF, réserves, parcs) : source API Carto IGN/INPN, zonages touchant le périmètre de projet."
+          : "Zonages de protection (Natura 2000, ZNIEFF, réserves, parcs) : source API Carto IGN/INPN, vérifiée sur le point précis.",
+        ...(sp ? [`Périmètre de projet : CoSIA millésime ${sp.millesime}, pixels retenus dans le contour (${sp.couverturePct} % couvert).`] : []),
       ],
     };
   },

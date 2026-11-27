@@ -39,10 +39,26 @@ export const reglementaireModule: DiagnosticModule<ReglementaireRaw, Reglementai
         `exposition RGA ${result.rgaExposition ?? "n.d."}, ${result.catnatCount ?? "n.d."} arrêté(s) ` +
         `de catastrophe naturelle sur les communes à moins de 1 km.`,
       indicators: [
-        { label: "Zonage", value: result.isRnu ? "RNU" : result.zonageLibelle ?? "n.d." },
-        { label: "Servitudes (SUP)", value: `${result.supCount ?? "n.d."}` },
+        ...(result.surPerimetre
+          ? [
+              {
+                label: "Périmètre de projet — zones du PLU",
+                value:
+                  result.zonagesPerimetre === null
+                    ? "n.d. (service indisponible)"
+                    : result.zonagesPerimetre.length
+                      ? result.zonagesPerimetre.map((z) => `${z.libelle} ${z.pct} %`).join(" ; ")
+                      : "aucune zone publiée",
+              },
+              ...(result.rgaParcelles.length
+                ? [{ label: "Périmètre de projet — argiles par parcelle", value: result.rgaParcelles.map((x) => `${x.court} : ${x.exposition ?? "n.d."}`).join(" ; ") }]
+                : []),
+            ]
+          : []),
+        { label: result.surPerimetre ? "Zonage au centre du périmètre" : "Zonage", value: result.isRnu ? "RNU" : result.zonageLibelle ?? "n.d." },
+        { label: result.surPerimetre ? "Servitudes (SUP) touchant le périmètre" : "Servitudes (SUP)", value: `${result.supCount ?? "n.d."}` },
         {
-          label: "Patrimoine protégé au point",
+          label: result.surPerimetre ? "Patrimoine protégé sur le périmètre" : "Patrimoine protégé au point",
           value:
             result.patrimoineAuPoint === null
               ? "n.d."
@@ -65,8 +81,10 @@ export const reglementaireModule: DiagnosticModule<ReglementaireRaw, Reglementai
           "de la Transition écologique).",
         "La totalité des documents d'urbanisme et des SUP n'est pas encore publiée sur le GPU " +
           "(~20 % des communes, surtout rurales) : une absence de résultat ne garantit pas leur absence réelle.",
-        "Le zonage correspond au point recherché, pas nécessairement à l'ensemble de la parcelle " +
-          "si celle-ci est à cheval sur deux zones.",
+        result.surPerimetre
+          ? "Périmètre de projet : zones du PLU découpées au contour des parcelles ; servitudes et protections patrimoniales qui touchent le périmètre ; argiles au centre de chaque parcelle."
+          : "Le zonage correspond au point recherché, pas nécessairement à l'ensemble de la parcelle " +
+            "si celle-ci est à cheval sur deux zones.",
         !result.risquesDisponibles
           ? "Synthèse Géorisques indisponible au moment de la génération (service à instabilité connue) — à régénérer ultérieurement."
           : "Exposition RGA moyenne/forte : une étude géotechnique G1/G2 (loi ÉLAN) est généralement requise pour une maison individuelle.",

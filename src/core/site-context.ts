@@ -65,5 +65,7 @@ export async function buildSiteContext(
     timezone: guessTimezone(),
     radiusM,
     parcelle,
+    perimetre: null,
+    pointAdresse: { lat: geo.lat, lon: geo.lon },
   };
 }

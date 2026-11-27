@@ -983,3 +983,38 @@ body[data-vue="atelier"] { overflow: hidden; }
 .repere-officiel { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
 .repere-officiel p { margin: 0 0 6px; font-size: 13px; }
 .repere-officiel p:last-child { margin-bottom: 0; }
+
+/* Périmètre de projet (sous la carte du diagnostic) */
+.perimetre-panel { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.perimetre-panel[hidden] { display: none; }
+.pp-tete { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.pp-titre { font-weight: 600; color: var(--ink); }
+.pp-titre::before { content: ""; display: inline-block; width: 14px; height: 0; border-top: 3px solid #c4322b; vertical-align: middle; margin-right: 6px; }
+.pp-resume { color: var(--ink-2); }
+.pp-vide { color: var(--muted); }
+.pp-liste, .pp-aide, .pp-message { margin: 0; color: var(--muted); }
+.pp-message { color: var(--ink-2); }
+.pp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.pp-actions .btn-primary, .pp-actions .btn-secondary { padding: 6px 12px; font-size: 13px; }
+.btn-lien { background: none; border: 0; padding: 4px 0; color: var(--ink-2); font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.btn-lien:hover { color: var(--ink); }
+.pp-ref { display: flex; gap: 6px; }
+.pp-ref label { flex: 1; }
+.pp-ref input { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 16px; }
+.pp-ref .btn-secondary { padding: 6px 12px; font-size: 13px; }
+.pp-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.pp-chips li { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px 2px 10px; border: 1px solid #c4322b; border-radius: 999px; color: var(--ink); }
+.pp-chips button { border: 0; background: none; color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 6px; cursor: pointer; }
+.pp-chips button:hover { color: var(--ink); }
+.map-selection, .map-selection .leaflet-interactive { cursor: crosshair !important; }
+/* Valeurs à deux échelles (périmètre de projet / rayon) */
+.deux-echelles { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 12px; }
+.deux-echelles th, .deux-echelles td { padding: 6px; border-bottom: 1px solid var(--border); text-align: right; }
+.deux-echelles th:first-child, .deux-echelles td:first-child { text-align: left; }
+.deux-echelles thead th { font-size: 12px; font-weight: 600; color: var(--muted); }
+.deux-echelles thead th.col-perimetre { color: #c4322b; }
+.deux-echelles td.col-perimetre { font-weight: 600; color: var(--ink); }
+/* Carte raccourcie quand le panneau du périmètre est affiché (tout reste visible). */
+@media (min-width: 901px) {
+  .col-map:has(> .perimetre-panel:not([hidden])) .map-wrap { height: calc(100vh - var(--header-h) - 64px - 150px); }
+}

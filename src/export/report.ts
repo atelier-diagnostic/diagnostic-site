@@ -63,7 +63,21 @@ export async function generateReport(
     A4.margin,
     y,
   );
-  y += 8;
+  y += 5;
+  if (ctx.perimetre) {
+    const p = ctx.perimetre;
+    const surf = `${p.surfaceM2.toLocaleString("fr-FR")} m² (${p.surfaceSource === "contenance" ? "contenances cadastrales" : "surface du contour"})`;
+    const ligne =
+      p.source === "import"
+        ? `Périmètre de projet : contour importé, ${surf}`
+        : `Périmètre de projet : ${p.parcelles.length} parcelle(s), ${surf} — ${p.parcelles.map((x) => x.reference).join(", ")}`;
+    const lignes = pdf.splitTextToSize(`${ligne}. Rayon d'analyse${ctx.radiusM !== null ? ` de ${ctx.radiusM} m` : ""} centré sur le périmètre.`, A4.w - 2 * A4.margin);
+    pdf.setFontSize(9);
+    pdf.text(lignes, A4.margin, y);
+    pdf.setFontSize(11);
+    y += lignes.length * 4;
+  }
+  y += 3;
 
   // Carte
   const mapImg = await mapToImage(mapEl);

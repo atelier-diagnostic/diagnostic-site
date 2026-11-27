@@ -38,7 +38,7 @@
         <label for="search-input" class="visually-hidden">Adresse ou lieu</label>
         <input id="search-input" type="text" placeholder="Adresse ou lieu (ex. Place de la Comédie, Montpellier)" autocomplete="off" />
       </div>
-      <div id="radius-control" role="group" aria-label="Périmètre d'analyse"></div>
+      <div id="radius-control" role="group" aria-label="Rayon d'analyse"></div>
       <button type="submit" class="btn-primary">Analyser</button>
     </form>
     <p id="site-info" class="site-info" hidden></p>
@@ -49,6 +49,7 @@
           <div id="map" class="map"></div>
           <a href="#atelier" class="map-atelier" hidden>Ouvrir dans l'atelier ↗</a>
         </section>
+        <section id="perimetre-panel" hidden aria-label="Périmètre de projet"></section>
         <p class="attributions">
           Données : © OpenStreetMap · © IGN / Géoplateforme (Etalab 2.0) · Open-Meteo · PVGIS © Union européenne
         </p>

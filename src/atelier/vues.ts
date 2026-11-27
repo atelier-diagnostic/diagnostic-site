@@ -85,7 +85,7 @@ const DEPARTS: Depart[] = [
     coches: { ...COMPOSE, "theme-ign:vegetation": false, "photo-dessous": false },
   },
 ];
-const GARDEES = ["perimetre", "repere"];
+const GARDEES = ["perimetre", "perimetre-projet", "repere"];
 
 /** Vues de départ, complétées pour toutes les couches connues. */
 export function vuesDeDepart(idsCouches: string[]): Vue[] {

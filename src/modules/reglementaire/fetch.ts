@@ -15,9 +15,15 @@ import {
 import { fetchPatrimoine, corrigerTexte, type Patrimoine } from "../../core/patrimoine";
 import type { SiteContext } from "../../core/types";
 import { pointInPolygon } from "../../core/geo";
+import { geometrieApi, intersectionGeoJsonM2, centreDeGravite } from "../../core/perimetre";
 
 function sitePoint(ctx: SiteContext) {
   return { type: "Point", coordinates: [ctx.lon, ctx.lat] };
+}
+
+/** Emprise d'interrogation : le périmètre de projet s'il existe, sinon le point. */
+function siteZone(ctx: SiteContext) {
+  return ctx.perimetre ? geometrieApi(ctx.perimetre) : sitePoint(ctx);
 }
 
 const fixMojibake = corrigerTexte;
@@ -143,7 +149,7 @@ async function fetchSupLayer(
   layer: "assiette-sup-s" | "assiette-sup-l" | "assiette-sup-p",
 ): Promise<SupItem[] | null> {
   try {
-    const url = gpuSup(layer, sitePoint(ctx));
+    const url = gpuSup(layer, siteZone(ctx));
     const data = await fetchJson<GpuFeatureCollection<GpuSupProps>>(
       url,
       { cacheKey: `gpu:${layer}`, ttlMs: 60 * 24 * 60 * 60 * 1000, timeoutMs: 15_000 },
@@ -263,6 +269,65 @@ async function fetchCatnat(ctx: SiteContext): Promise<CatnatRaw | null> {
   }
 }
 
+// --- Périmètre de projet ---------------------------------------------------------
+export interface ZonePerimetre {
+  libelle: string;
+  typezone: string | null;
+  /** Part du périmètre dans la zone (%). */
+  pct: number;
+  urlfic: string | null;
+}
+
+/** Zones du PLU qui recouvrent le périmètre, avec leur part. undefined = service en échec. */
+async function fetchZonagesPerimetre(ctx: SiteContext): Promise<ZonePerimetre[] | undefined> {
+  const p = ctx.perimetre;
+  if (!p) return [];
+  try {
+    const data = await fetchJson<GpuFeatureCollection<ZonageFeatureProps>>(gpuZoneUrba(geometrieApi(p)), {
+      cacheKey: "gpu:zone-urba-perimetre",
+      ttlMs: 60 * 24 * 60 * 60 * 1000,
+      timeoutMs: 20_000,
+      retries: 2,
+    });
+    const parZone = new Map<string, ZonePerimetre & { m2: number }>();
+    for (const f of data.features ?? []) {
+      const m2 = intersectionGeoJsonM2(f.geometry, p.contour);
+      if (m2 < 0.5) continue; // zone voisine qui ne fait que toucher la limite
+      const libelle = f.properties.libelle ?? f.properties.libelong ?? "Zone sans libellé";
+      const z = parZone.get(libelle) ?? { libelle, typezone: f.properties.typezone ?? null, pct: 0, urlfic: documentUrlFrom(f.properties), m2: 0 };
+      z.m2 += m2;
+      parZone.set(libelle, z);
+    }
+    const total = p.surfaceGeomM2;
+    return [...parZone.values()]
+      .map(({ m2, ...z }) => ({ ...z, pct: total > 0 ? Math.min(100, Math.round((m2 / total) * 1000) / 10) : 0 }))
+      .sort((a, b) => b.pct - a.pct);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Exposition aux argiles au centre de chaque parcelle (12 au plus). */
+async function fetchRgaParcelles(ctx: SiteContext): Promise<{ court: string; exposition: string | null }[]> {
+  const parcelles = ctx.perimetre?.parcelles.slice(0, 12) ?? [];
+  return Promise.all(
+    parcelles.map(async (x) => {
+      const c = centreDeGravite(x.geometrie);
+      try {
+        const r = await fetchJson<RgaResult>(georisquesRga(c.lat, c.lon), {
+          cacheKey: "georisques:rga",
+          ttlMs: 90 * 24 * 60 * 60 * 1000,
+          timeoutMs: 15_000,
+          retries: 1,
+        });
+        return { court: x.court, exposition: r.exposition ?? null };
+      } catch {
+        return { court: x.court, exposition: null };
+      }
+    }),
+  );
+}
+
 // --- Assemblage ----------------------------------------------------------------
 export interface ReglementaireRaw {
   zonage: ZonageFeatureProps | null;
@@ -278,10 +343,16 @@ export interface ReglementaireRaw {
   patrimoine: Patrimoine | null;
   /** true si un souci technique a touché au moins une source (affiché, pas cause de blocage). */
   partialFailure: boolean;
+  /** Zones du PLU sur le périmètre de projet ([] sans périmètre, undefined si le service a échoué). */
+  zonagesPerimetre: ZonePerimetre[] | undefined;
+  /** Exposition RGA au centre de chaque parcelle du périmètre. */
+  rgaParcelles: { court: string; exposition: string | null }[];
+  /** Servitudes lues sur le périmètre de projet (et non au point). */
+  surPerimetre: boolean;
 }
 
 export async function fetchReglementaire(ctx: SiteContext): Promise<ReglementaireRaw> {
-  const [zonageRaw, isRnu, sup, rga, risquesSynthese, catnat, patrimoine] = await Promise.all([
+  const [zonageRaw, isRnu, sup, rga, risquesSynthese, catnat, patrimoine, zonagesPerimetre, rgaParcelles] = await Promise.all([
     fetchZonage(ctx),
     fetchIsRnu(ctx),
     fetchSup(ctx),
@@ -289,6 +360,8 @@ export async function fetchReglementaire(ctx: SiteContext): Promise<Reglementair
     fetchRisquesSynthese(ctx),
     fetchCatnat(ctx),
     fetchPatrimoine(ctx.lat, ctx.lon, 1000).catch(() => null),
+    fetchZonagesPerimetre(ctx),
+    fetchRgaParcelles(ctx),
   ]);
 
   const zonageFailed = zonageRaw === undefined;
@@ -298,5 +371,8 @@ export async function fetchReglementaire(ctx: SiteContext): Promise<Reglementair
   const partialFailure =
     zonageFailed || rga === null || risquesSynthese === null || catnat === null || sup === null;
 
-  return { zonage, zonageFailed, isRnu, documentUrl, sup, rga, risquesSynthese, catnat, patrimoine, partialFailure };
+  return {
+    zonage, zonageFailed, isRnu, documentUrl, sup, rga, risquesSynthese, catnat, patrimoine, partialFailure,
+    zonagesPerimetre, rgaParcelles, surPerimetre: !!ctx.perimetre,
+  };
 }

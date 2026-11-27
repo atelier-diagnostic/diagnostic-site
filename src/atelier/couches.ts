@@ -323,7 +323,16 @@ export const COUCHES: CoucheDef[] = [
     opacite: 0.55,
     tuiles: wms(WMS_V, "Natura_2000,Patrinat_ZNIEFF2_France,Patrinat_ZNIEFF1_France"),
   },
-  { id: "perimetre", famille: "Repères", titre: "Périmètre d'analyse", source: "Diagnostic", active: true, opacite: 1 },
+  {
+    id: "perimetre-projet",
+    famille: "Repères",
+    titre: "Périmètre de projet",
+    source: "Parcelles choisies dans le diagnostic (cadastre PCI)",
+    active: true,
+    opacite: 1,
+    note: "Choix des parcelles : onglet Diagnostic, sous la carte. Contour cadastral graphique, sans valeur juridique.",
+  },
+  { id: "perimetre", famille: "Repères", titre: "Rayon d'analyse", source: "Diagnostic", active: true, opacite: 1 },
   { id: "repere", famille: "Repères", titre: "Repère du site", source: "Point analysé", active: true, opacite: 1 },
   { id: "carroyage", famille: "Repères", titre: "Carroyage", source: "Lambert-93 (RGF93)", active: false, opacite: 0.45 },
 ];

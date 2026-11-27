@@ -2,7 +2,7 @@
 // Peu de "calcul" à proprement parler : ce module présente des faits
 // administratifs plutôt qu'il ne les dérive — la transparence porte donc
 // surtout sur "quelle source a répondu", pas sur des seuils numériques.
-import type { ReglementaireRaw, RisqueSyntheseRaw, CatnatItem, SupItem } from "./fetch";
+import type { ReglementaireRaw, RisqueSyntheseRaw, CatnatItem, SupItem, ZonePerimetre } from "./fetch";
 import { genreDe, type GenrePatrimoine } from "../../core/patrimoine";
 
 export interface RisqueFlag {
@@ -41,6 +41,10 @@ export interface ReglementaireResult {
   /** Rapport Géorisques complet pour l'adresse. */
   georisquesUrl: string | null;
   partialFailure: boolean;
+  /** Périmètre de projet : zones du PLU (part de surface), null = service en échec ; [] sans périmètre. */
+  zonagesPerimetre: ZonePerimetre[] | null;
+  rgaParcelles: ReglementaireRaw["rgaParcelles"];
+  surPerimetre: boolean;
 }
 
 /** Risques marqués « present » dans la synthèse Géorisques, avec leur statut
@@ -110,5 +114,8 @@ export function computeReglementaire(raw: ReglementaireRaw): ReglementaireResult
     mhPlusProche: raw.patrimoine?.plusProche ?? null,
     georisquesUrl: raw.risquesSynthese?.url ?? null,
     partialFailure: raw.partialFailure,
+    zonagesPerimetre: raw.zonagesPerimetre ?? null,
+    rgaParcelles: raw.rgaParcelles,
+    surPerimetre: raw.surPerimetre,
   };
 }

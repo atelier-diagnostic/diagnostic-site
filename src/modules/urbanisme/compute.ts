@@ -12,6 +12,7 @@
 import type { UrbanismeRaw, HeightSource } from "./fetch";
 import { polygonAreaM2, longestEdgeAzimuthDeg } from "../../core/geo";
 import type { SiteContext } from "../../core/types";
+import { intersectionM2 } from "../../core/perimetre";
 
 export const ORIENTATION_LABELS = ["Nord-Sud", "Nord-Est / Sud-Ouest", "Est-Ouest", "Nord-Ouest / Sud-Est"];
 
@@ -44,6 +45,47 @@ export interface UrbanismeResult {
   orientationPct: number[];
   dominantOrientation: number;
   risqueIlotChaleur: RisqueIlotChaleur;
+  /** Mêmes grandeurs dans le périmètre de projet (bâti découpé au contour) ; null sans périmètre. */
+  perimetre: {
+    surfaceM2: number;
+    surfaceSource: "contenance" | "geometrie";
+    batiments: number;
+    empriseM2: number;
+    cesPct: number;
+    cosApprox: number;
+    meanHeightM: number | null;
+    heightCoveragePct: number;
+  } | null;
+}
+
+/** Bâti découpé au contour du périmètre : emprise, CES, COS, hauteur. */
+function statsPerimetre(raw: UrbanismeRaw, ctx: SiteContext): UrbanismeResult["perimetre"] {
+  const p = ctx.perimetre;
+  if (!p || !raw.buildingsPerimetre) return null;
+  let emprise = 0, plancher = 0, hSum = 0, hArea = 0, n = 0, connus = 0;
+  for (const b of raw.buildingsPerimetre) {
+    const a = intersectionM2(b.polygon, p.contour);
+    if (a < 0.5) continue; // simple contact de limite
+    n++;
+    emprise += a;
+    if (b.heightM !== null) {
+      connus++;
+      hSum += a * b.heightM;
+      hArea += a;
+      plancher += (a * b.heightM) / 3;
+    }
+  }
+  const ref = p.surfaceM2;
+  return {
+    surfaceM2: ref,
+    surfaceSource: p.surfaceSource,
+    batiments: n,
+    empriseM2: Math.round(emprise),
+    cesPct: ref > 0 ? Math.min(100, Math.round((emprise / ref) * 1000) / 10) : 0,
+    cosApprox: ref > 0 ? Math.round((plancher / ref) * 100) / 100 : 0,
+    meanHeightM: hArea > 0 ? Math.round((hSum / hArea) * 10) / 10 : null,
+    heightCoveragePct: n > 0 ? Math.round((connus / n) * 100) : 0,
+  };
 }
 
 function orientationBin(azimuthDeg: number): number {
@@ -125,6 +167,7 @@ export function computeUrbanisme(raw: UrbanismeRaw, ctx: SiteContext): Urbanisme
     orientationPct,
     dominantOrientation,
     risqueIlotChaleur,
+    perimetre: statsPerimetre(raw, ctx),
   };
 }
 

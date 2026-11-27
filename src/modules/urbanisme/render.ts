@@ -4,6 +4,7 @@ import type { ChartConfiguration } from "chart.js";
 import { ORIENTATION_LABELS, type UrbanismeResult } from "./compute";
 import { orientationConfig } from "./charts";
 import { BUILDING_SOURCE_LABEL } from "../../core/buildings";
+import { tableDeuxEchelles, entetePerimetre } from "../../ui/deux-echelles";
 
 function indicator(label: string, value: string): string {
   return `<div class="indicator"><span class="ind-value">${value}</span><span class="ind-label">${label}</span></div>`;
@@ -39,7 +40,27 @@ export function renderUrbanisme(el: HTMLElement, r: UrbanismeResult): void {
       ? `Parcelle cadastrale${r.parcelleReference ? ` ${r.parcelleReference}` : ""} (${r.referenceAreaM2} m²)`
       : `Cercle de ${r.effectiveRadiusM} m (${r.referenceAreaM2} m²)`;
 
+  const fr = (v: number, d = 0) => v.toLocaleString("fr-FR", { maximumFractionDigits: d });
+  const p = r.perimetre;
+  const deuxEchelles = p
+    ? `${tableDeuxEchelles(
+        [
+          { label: "Bâtiments", perimetre: fr(p.batiments), rayon: fr(r.buildingCount) },
+          { label: "Emprise bâtie", perimetre: `${fr(p.empriseM2)} m²`, rayon: `${fr(r.footprintAreaM2)} m²` },
+          { label: "Emprise au sol (CES)", perimetre: `${fr(p.cesPct, 1)} %`, rayon: `${fr(r.cesPct, 1)} %` },
+          { label: "COS approximatif", perimetre: fr(p.cosApprox, 2), rayon: fr(r.cosApprox, 2) },
+          { label: "Hauteur moyenne", perimetre: p.meanHeightM !== null ? `${fr(p.meanHeightM, 1)} m` : "n.d.", rayon: r.meanHeightM !== null ? `${fr(r.meanHeightM, 1)} m` : "n.d." },
+        ],
+        entetePerimetre(p.surfaceM2),
+        r.referenceAreaSource === "parcelle_cadastrale" ? "Parcelle de l'adresse" : `Rayon ${r.effectiveRadiusM} m`,
+      )}
+      <p class="module-note">Périmètre de projet : bâtiments découpés au contour des parcelles, rapportés à
+      ${p.surfaceSource === "contenance" ? "la somme des contenances cadastrales" : "la surface du contour"} (${fr(p.surfaceM2)} m²) ;
+      hauteur connue pour ${p.heightCoveragePct} % d'entre eux. Rayon : bâtiments entiers, estimation haute.</p>`
+    : "";
+
   el.innerHTML = `
+    ${deuxEchelles}
     <div class="indicators">
       ${indicator("Bâtiments recensés", `${r.buildingCount}`)}
       ${indicator("Source des hauteurs", BUILDING_SOURCE_LABEL[r.heightSource])}

@@ -11,6 +11,7 @@
 // métropolitaine), 17 au-delà de 400 m, 16 au-delà de 1 000 m.
 // Millésime 2021-2023, repli sur 2017-2020 si la zone n'est pas couverte.
 
+import type { MultiPolygone } from "./perimetre";
 import { IGN_WMTS } from "../api/endpoints";
 
 export type ClasseCosia =
@@ -45,7 +46,7 @@ const RGB = CLASSES_COSIA.map((c) => [1, 3, 5].map((o) => parseInt(c.couleur.sli
 
 export interface CosiaResultat {
   millesime: string;
-  /** Surface par classe (m²) dans le cercle. */
+  /** Surface par classe (m²) dans le cercle (ou le contour). */
   surfaces: Record<ClasseCosia, number>;
   /** Surface classée (m²) ; la part non couverte par CoSIA est exclue. */
   totalM2: number;
@@ -80,11 +81,31 @@ async function pixels(url: string): Promise<Uint8ClampedArray | null> {
   throw new Error("CoSIA indisponible");
 }
 
-async function analyserMillesime(lat: number, lon: number, rayonM: number, millesime: string): Promise<CosiaResultat> {
+/**
+ * Test « dans la zone » en pixels du monde : cercle par défaut, ou contour
+ * (multipolygone GeoJSON, trous compris) pour un périmètre de projet.
+ */
+function testZone(z: number, cx: number, cy: number, rPx: number, contour?: MultiPolygone): (px: number, py: number) => boolean {
+  if (!contour) return (px, py) => (px - cx) ** 2 + (py - cy) ** 2 <= rPx * rPx;
+  const anneaux = contour.flatMap((poly) => poly.map((ring) => ring.map(([lo, la]) => tuileXY(la, lo, z).map((v) => v * 256) as [number, number])));
+  return (px, py) => {
+    let dedans = false;
+    for (const r of anneaux)
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const [xi, yi] = r[i];
+        const [xj, yj] = r[j];
+        if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) dedans = !dedans;
+      }
+    return dedans;
+  };
+}
+
+async function analyserMillesime(lat: number, lon: number, rayonM: number, millesime: string, contour?: MultiPolygone): Promise<CosiaResultat> {
   const z = rayonM <= 400 ? 18 : rayonM <= 1000 ? 17 : 16;
   const mParPx = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** z;
-  const rPx = rayonM / mParPx; // rayon en pixels du monde au zoom z
+  const rPx = rayonM / mParPx; // rayon (englobant) en pixels du monde au zoom z
   const [cx, cy] = tuileXY(lat, lon, z).map((v) => v * 256);
+  const dansZone = testZone(z, cx, cy, rPx, contour);
   const tx0 = Math.floor((cx - rPx) / 256), tx1 = Math.floor((cx + rPx) / 256);
   const ty0 = Math.floor((cy - rPx) / 256), ty1 = Math.floor((cy + rPx) / 256);
   const layer = `IGNF_COSIA_${millesime}`;
@@ -98,10 +119,10 @@ async function analyserMillesime(lat: number, lon: number, rayonM: number, mille
         const url = IGN_WMTS.replace("{z}", String(z)).replace("{x}", String(tx)).replace("{y}", String(ty)).replace("{layer}", layer).replace("{format}", "image/png");
         const d = await pixels(url);
         for (let j = 0; j < 256; j++) {
-          const py = ty * 256 + j + 0.5 - cy;
+          const py = ty * 256 + j + 0.5;
           for (let i = 0; i < 256; i++) {
-            const px = tx * 256 + i + 0.5 - cx;
-            if (px * px + py * py > rPx * rPx) continue;
+            const px = tx * 256 + i + 0.5;
+            if (!dansZone(px, py)) continue;
             dansCercle++;
             if (!d) continue;
             const o = (j * 256 + i) * 4;
@@ -170,10 +191,14 @@ export async function classesCosiaTuile(z: number, x: number, y: number): Promis
   return null;
 }
 
-export async function analyserCosia(lat: number, lon: number, rayonM: number): Promise<CosiaResultat> {
+/**
+ * Couverture du sol dans un cercle, ou dans un contour (périmètre de projet) :
+ * `rayonM` est alors le rayon englobant du contour autour de (lat, lon).
+ */
+export async function analyserCosia(lat: number, lon: number, rayonM: number, contour?: MultiPolygone): Promise<CosiaResultat> {
   let dernier: CosiaResultat | null = null;
   for (const m of MILLESIMES) {
-    const r = await analyserMillesime(lat, lon, rayonM, m);
+    const r = await analyserMillesime(lat, lon, rayonM, m, contour);
     if (r.couverturePct >= 80) return r;
     if (!dernier || r.couverturePct > dernier.couverturePct) dernier = r;
   }

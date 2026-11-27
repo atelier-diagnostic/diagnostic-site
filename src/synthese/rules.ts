@@ -246,11 +246,13 @@ function regleEauPluviale(i: SyntheseInput): Enjeu {
   } else d.nonEvalues.push("Module Eau non disponible");
 
   if (i.nature) {
-    const sol = i.nature.sol;
+    // Périmètre de projet s'il est mesuré : c'est le sol sur lequel le projet agit.
+    const sol = i.nature.solPerimetre ?? i.nature.sol;
+    const ou = i.nature.solPerimetre ? " sur le périmètre de projet" : "";
     if (sol && sol.impermeabilisePct >= IMPERMEABLE_FORT_PCT)
-      s(d, "nature", 2, "Sols très imperméabilisés (ruissellement, désimperméabilisation à étudier)", `${sol.impermeabilisePct} % imperméabilisés (CoSIA)`);
+      s(d, "nature", 2, "Sols très imperméabilisés (ruissellement, désimperméabilisation à étudier)", `${sol.impermeabilisePct} % imperméabilisés${ou} (CoSIA)`);
     else if (sol && sol.impermeabilisePct >= IMPERMEABLE_MOYEN_PCT)
-      s(d, "nature", 1, "Sols majoritairement imperméabilisés (ruissellement)", `${sol.impermeabilisePct} % imperméabilisés (CoSIA)`);
+      s(d, "nature", 1, "Sols majoritairement imperméabilisés (ruissellement)", `${sol.impermeabilisePct} % imperméabilisés${ou} (CoSIA)`);
     else if (!sol && i.nature.greenPct < VEGETAL_FAIBLE_PCT)
       s(d, "nature", 1, "Sols majoritairement imperméabilisés (ruissellement)", `${i.nature.greenPct} % végétalisé`);
   } else d.nonEvalues.push("Végétalisation non disponible (module Nature)");

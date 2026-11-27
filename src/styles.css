@@ -1014,9 +1014,12 @@ body[data-vue="atelier"] { overflow: hidden; }
 .deux-echelles thead th { font-size: 12px; font-weight: 600; color: var(--muted); }
 .deux-echelles thead th.col-perimetre { color: #c4322b; }
 .deux-echelles td.col-perimetre { font-weight: 600; color: var(--ink); }
-/* Carte raccourcie quand le panneau du périmètre est affiché (tout reste visible). */
+/* Bureau : le panneau du périmètre au-dessus de la carte, la carte prend la
+   hauteur restante (la colonne tient dans l'écran, panneau ouvert ou non). */
 @media (min-width: 901px) {
-  .col-map:has(> .perimetre-panel:not([hidden])) .map-wrap { height: calc(100vh - var(--header-h) - 64px - 150px); }
+  .col-map { height: calc(100vh - var(--header-h) - 32px); }
+  .col-map > .map-wrap { flex: 1 1 auto; height: auto; min-height: 300px; }
+  .col-map > .perimetre-panel { flex: none; max-height: 45%; overflow-y: auto; }
 }
 
 /* Disponibilité du LiDAR HD (diagnostic et atelier) */

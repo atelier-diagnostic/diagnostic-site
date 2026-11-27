@@ -363,7 +363,8 @@ export const USAGES: { valeur: string; color: string }[] = [
   { valeur: "Sportif", color: "#008300" },
 ];
 export const USAGE_AUTRE = "#b8b8bd";
-export const NEUTRE = "#e6e2da";
+/** Bâti en coloration « Neutre » : blanc (contour gris en 2D, faces ombrées en 3D). */
+export const NEUTRE = "#ffffff";
 
 /** Heures de soleil au sol : rampe chaude, du sombre (peu de soleil) au clair (beaucoup). */
 export const CLASSES_SOLEIL = [

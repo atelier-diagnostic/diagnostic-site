@@ -47,10 +47,22 @@ export const urbanismeModule: DiagnosticModule<UrbanismeRaw, UrbanismeResult> = 
       moduleId: "urbanisme",
       title: "Urbanisme",
       summary:
+        (result.perimetre
+          ? `Périmètre de projet (${result.perimetre.surfaceM2} m²) : ${result.perimetre.batiments} bâtiment(s), emprise ${result.perimetre.empriseM2} m² (CES ${result.perimetre.cesPct} %). `
+          : "") +
         `${result.buildingCount} bâtiments, référence ${referenceLabel} : ` +
         `emprise au sol ${result.cesPct} %, orientation dominante ${ORIENTATION_LABELS[result.dominantOrientation]}. ` +
         `Indice qualitatif d'îlot de chaleur : ${result.risqueIlotChaleur}.`,
       indicators: [
+        ...(result.perimetre
+          ? [
+              { label: "Périmètre de projet — surface", value: `${result.perimetre.surfaceM2} m² (${result.perimetre.surfaceSource === "contenance" ? "contenances cadastrales" : "contour"})` },
+              { label: "Périmètre de projet — bâtiments", value: `${result.perimetre.batiments}` },
+              { label: "Périmètre de projet — emprise bâtie", value: `${result.perimetre.empriseM2} m² (CES ${result.perimetre.cesPct} %)` },
+              { label: "Périmètre de projet — COS approximatif", value: `${result.perimetre.cosApprox}` },
+              { label: "Périmètre de projet — hauteur moyenne", value: result.perimetre.meanHeightM !== null ? `${result.perimetre.meanHeightM} m` : "n.d." },
+            ]
+          : []),
         { label: "Bâtiments recensés", value: `${result.buildingCount}` },
         { label: "Source des hauteurs", value: result.heightSource },
         { label: "Surface de référence", value: referenceLabel },

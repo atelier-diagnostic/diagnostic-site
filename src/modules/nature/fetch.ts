@@ -9,6 +9,7 @@
 import { fetchJson } from "../../api/client";
 import { OVERPASS, natureLayerUrl } from "../../api/endpoints";
 import type { SiteContext } from "../../core/types";
+import { geometrieApi } from "../../core/perimetre";
 import { polygonAreaM2, pointInPolygon, distanceMeters, type LatLon } from "../../core/geo";
 import { analyserCosia, type CosiaResultat } from "../../core/cosia";
 import { analyserCanopee, type CanopeeLidar } from "../../core/canopee-lidar";
@@ -74,7 +75,8 @@ async function fetchProtectedLayer(
   ctx: SiteContext,
 ): Promise<{ success: boolean; items: ProtectedZoneItem[] }> {
   try {
-    const geom = { type: "Point", coordinates: [ctx.lon, ctx.lat] };
+    // Sur le périmètre de projet s'il existe (zonages qui le touchent), sinon au point.
+    const geom = ctx.perimetre ? geometrieApi(ctx.perimetre) : { type: "Point", coordinates: [ctx.lon, ctx.lat] };
     const url = natureLayerUrl(layer, geom);
     const data = await fetchJson<NatureFeatureCollection>(url, {
       cacheKey: `apicarto-nature:${layer}`,
@@ -117,6 +119,10 @@ export interface NatureRaw {
   protectedZonesFetchFailed: boolean;
   /** Couverture du sol CoSIA (IGN) dans le cercle ; null si indisponible. */
   cosia: CosiaResultat | null;
+  /** Couverture du sol CoSIA dans le périmètre de projet ; null si aucun périmètre ou indisponible. */
+  cosiaPerimetre: CosiaResultat | null;
+  /** Zonages de protection lus sur le périmètre de projet (true) ou au point (false). */
+  protectionsSurPerimetre: boolean;
   /** Canopée et arbres mesurés (LiDAR HD × CoSIA) ; null si indisponible ou non publié. */
   lidar: Omit<CanopeeLidar, "image" | "arbres"> & { nbArbres: number } | null;
   /** Règle 3-30-300 : espace vert d'au moins 1 ha à moins de 300 m ; null si non évalué. */
@@ -184,9 +190,11 @@ export async function fetchNature(ctx: SiteContext): Promise<NatureRaw> {
   `.trim();
 
   // CoSIA (IGN) et espace vert à 300 m : indépendants d'Overpass pour la verdure.
-  const [{ zones: protectedZones, allFailed: protectedZonesFetchFailed }, cosia, espaceVert300, lidar] = await Promise.all([
+  const p = ctx.perimetre;
+  const [{ zones: protectedZones, allFailed: protectedZonesFetchFailed }, cosia, cosiaPerimetre, espaceVert300, lidar] = await Promise.all([
     fetchProtectedZones(ctx),
     analyserCosia(ctx.lat, ctx.lon, Math.max(r, 50)).catch(() => null),
+    p ? analyserCosia(p.centre.lat, p.centre.lon, Math.max(p.rayonEnglobantM, 5), p.contour).catch(() => null) : Promise.resolve(null),
     fetchEspaceVert300(ctx),
     analyserCanopee(ctx.lat, ctx.lon, Math.max(r, 50))
       .then(({ image: _i, arbres, ...reste }) => ({ ...reste, nbArbres: arbres.length }))
@@ -231,6 +239,8 @@ export async function fetchNature(ctx: SiteContext): Promise<NatureRaw> {
       protectedZones,
       protectedZonesFetchFailed,
       cosia,
+      cosiaPerimetre,
+      protectionsSurPerimetre: !!p,
       espaceVert300,
       lidar,
     };
@@ -247,6 +257,8 @@ export async function fetchNature(ctx: SiteContext): Promise<NatureRaw> {
       protectedZones,
       protectedZonesFetchFailed,
       cosia,
+      cosiaPerimetre,
+      protectionsSurPerimetre: !!p,
       espaceVert300,
       lidar,
     };

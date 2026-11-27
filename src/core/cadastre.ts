@@ -64,10 +64,21 @@ export async function fetchParcelle(lat: number, lon: number): Promise<Parcelle 
       retries: 2,
     });
 
+    // Le Parcellaire Express publie des MultiPolygon : on garde le contour
+    // extérieur de la première partie (une parcelle en a presque toujours une seule).
     const candidates = (data.features ?? [])
-      .filter((f) => f.geometry?.type === "Polygon" && f.geometry.coordinates?.[0]?.length >= 3)
       .map((f) => ({
-        polygon: f.geometry.coordinates[0].map(([lon2, lat2]) => ({ lat: lat2, lon: lon2 })),
+        ring:
+          f.geometry?.type === "Polygon"
+            ? (f.geometry.coordinates as number[][][])[0]
+            : f.geometry?.type === "MultiPolygon"
+              ? (f.geometry.coordinates as unknown as number[][][][])[0]?.[0]
+              : undefined,
+        properties: f.properties,
+      }))
+      .filter((f): f is { ring: number[][]; properties: Record<string, unknown> } => (f.ring?.length ?? 0) >= 3)
+      .map((f) => ({
+        polygon: f.ring.map(([lon2, lat2]) => ({ lat: lat2, lon: lon2 })),
         properties: f.properties,
       }));
 

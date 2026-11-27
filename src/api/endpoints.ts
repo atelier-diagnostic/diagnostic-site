@@ -120,6 +120,21 @@ export function ignWfsParcelles(bbox: {
 }
 
 /**
+ * API Carto — module Cadastre (parcelles PCI, sans clé). Recherche par commune,
+ * section et numéro ; `com_abs` (commune absorbée, « 000 » par défaut) en option.
+ */
+export function apicartoParcelle(insee: string, section: string, numero: string, comAbs?: string): string {
+  return (
+    `https://apicarto.ign.fr/api/cadastre/parcelle?code_insee=${encodeURIComponent(insee)}` +
+    `&section=${encodeURIComponent(section)}&numero=${encodeURIComponent(numero)}` +
+    (comAbs ? `&com_abs=${encodeURIComponent(comAbs)}` : "")
+  );
+}
+
+/** WMTS du cadastre (Parcellaire Express), pour la carte du diagnostic. */
+export const IGN_CADASTRE_WMTS = { layer: "CADASTRALPARCELS.PARCELLAIRE_EXPRESS", format: "image/png" };
+
+/**
  * WFS Géoplateforme — BD TOPO® bâtiments (avec attribut hauteur).
  * NB : le nom de couche ("BDTOPO_V3:batiment") et le nom d'attribut hauteur
  * sont ceux publiés au moment de l'écriture ; à vérifier au premier test

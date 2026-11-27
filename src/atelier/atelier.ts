@@ -491,6 +491,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         ombres: vecteur(),
         "ombres-arbres": vecteur(),
         perimetre: vecteur(),
+        "perimetre-projet": vecteur(),
         carroyage: vecteur(),
         courbes: vecteur(),
         isochrones: vecteur(),
@@ -670,6 +671,8 @@ export function createAtelier(root: HTMLElement): Atelier {
           paint: { "line-color": "#3a3a3c", "line-opacity": 0.45, "line-width": ["case", ["get", "majeur"], 1, 0.5] },
         },
         { id: "perimetre", type: "line", source: "perimetre", paint: { "line-color": "#3a3a3c", "line-width": 1.5, "line-dasharray": [3, 2] } },
+        // Périmètre de projet : trait épais, même rouge que la carte du diagnostic.
+        { id: "perimetre-projet", type: "line", source: "perimetre-projet", layout: { "line-join": "round" }, paint: { "line-color": "#c4322b", "line-width": 3 } },
         // Coupe de terrain : trait A–B (posé sur le relief en 3D), points clés, curseur du profil.
         { id: "coupe-halo", type: "line", source: "coupe", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round" }, paint: { "line-color": "#ffffff", "line-width": 5, "line-opacity": 0.85 } },
         { id: "coupe-ligne", type: "line", source: "coupe", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round" }, paint: { "line-color": "#1d1d1f", "line-width": 2, "line-opacity": ["case", ["get", "apercu"], 0.5, 1] } },
@@ -2316,7 +2319,21 @@ export function createAtelier(root: HTMLElement): Atelier {
     const memePoint = site && site.lat === ctx.lat && site.lon === ctx.lon;
     site = ctx;
     vide.hidden = true;
-    q<HTMLElement>(".at-site").textContent = `${ctx.label}${ctx.radiusM !== null ? ` · périmètre ${ctx.radiusM} m` : " · échelle parcelle"}`;
+    const pp = ctx.perimetre;
+    q<HTMLElement>(".at-site").textContent =
+      `${ctx.label}${pp ? ` · périmètre de projet ${pp.surfaceM2.toLocaleString("fr-FR")} m²` : ""}${ctx.radiusM !== null ? ` · rayon ${ctx.radiusM} m` : " · échelle parcelle"}`;
+    (map.getSource("perimetre-projet") as maplibregl.GeoJSONSource).setData({
+      type: "FeatureCollection",
+      features: pp ? [{ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: pp.contour } }] : [],
+    });
+    etatCouche(
+      "perimetre-projet",
+      pp
+        ? pp.source === "import"
+          ? "Contour importé."
+          : `${pp.parcelles.length} parcelle${pp.parcelles.length > 1 ? "s" : ""} : ${pp.parcelles.map((x) => x.court).join(", ")}.`
+        : "Aucun périmètre de projet : choisissez des parcelles dans l'onglet Diagnostic, sous la carte.",
+    );
     (map.getSource("perimetre") as maplibregl.GeoJSONSource).setData({
       type: "FeatureCollection",
       features: ctx.radiusM !== null ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: cercle(ctx.lat, ctx.lon, ctx.radiusM) } }] : [],
@@ -2445,7 +2462,11 @@ export function createAtelier(root: HTMLElement): Atelier {
         if (c.id === "vegetation") it.pastilles = [{ couleur: "#5f9e4b", libelle: "zone de végétation" }];
         if (c.id === "canopee") it.pastilles = CLASSES_HAUTEUR.map((h) => ({ couleur: h.couleur, libelle: `végétation ${h.titre}` }));
         if (c.id === "ombres") it.pastilles = [{ couleur: "#1f2a44", libelle: `ombres, ${dateInput.value} ${hourInput.value.replace(".25", "h15").replace(".5", "h30").replace(".75", "h45")} h` }];
-        if (c.id === "perimetre") it.pastilles = [{ couleur: "#3a3a3c", libelle: "périmètre d'analyse" }];
+        if (c.id === "perimetre") it.pastilles = [{ couleur: "#3a3a3c", libelle: `rayon d'analyse${site?.radiusM ? ` (${site.radiusM} m)` : ""}` }];
+        if (c.id === "perimetre-projet") {
+          if (!site?.perimetre) continue; // rien à légender
+          it.pastilles = [{ couleur: "#c4322b", libelle: "périmètre de projet" }];
+        }
         if (c.id === "cosia") it.titre = `CoSIA ${millesime}`;
         if (c.id === "carroyage") it.titre = `Carroyage Lambert-93, pas de ${pas} m`;
         items.push(it);

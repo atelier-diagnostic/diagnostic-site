@@ -20,7 +20,12 @@ import {
   getMapElement,
   setMarkerMovedHandler,
   resetMarker,
+  moveSiteMarker,
+  updatePerimetreLayer,
+  cadrerPerimetre,
 } from "./map/map";
+import { relire, memoriser, type Perimetre } from "./core/perimetre";
+import { attachPerimetrePanel, resumePerimetre } from "./ui/perimetre-panel";
 import { manualPoint, type GeocodeResult } from "./core/geocode";
 import { distanceMeters } from "./core/geo";
 import { generateReport } from "./export/report";
@@ -137,6 +142,37 @@ const radius = attachRadiusControl(document.getElementById("radius-control")!, a
   refreshSynthese();
 });
 
+// --- Périmètre de projet -------------------------------------------------------
+// Les parcelles choisies forment le périmètre : les chiffres « du terrain » s'y
+// calculent, et le rayon d'analyse se recentre sur son centre. Retenu par
+// adresse dans le navigateur.
+
+/** Contexte avec (ou sans) périmètre : le point d'analyse suit son centre. */
+function avecPerimetre(ctx: SiteContext, p: Perimetre | null): SiteContext {
+  const c = p ? p.centre : ctx.pointAdresse;
+  return { ...ctx, perimetre: p, lat: c.lat, lon: c.lon };
+}
+
+function afficherPerimetre(ctx: SiteContext): void {
+  moveSiteMarker(ctx.lat, ctx.lon);
+  updateAnalysisCircle(ctx);
+  updatePerimetreLayer(ctx.perimetre?.contour ?? null, ctx.perimetre ? `Périmètre de projet · ${resumePerimetre(ctx.perimetre)}` : undefined);
+  panneauPerimetre.setSite(ctx);
+}
+
+const panneauPerimetre = attachPerimetrePanel(document.getElementById("perimetre-panel")!, async (p) => {
+  if (!currentCtx) return;
+  memoriser(currentCtx.pointAdresse.lat + "," + currentCtx.pointAdresse.lon, p);
+  currentCtx = avecPerimetre(currentCtx, p);
+  afficherPerimetre(currentCtx);
+  if (atelier) void atelier.setSite(currentCtx);
+  updateSiteInfo(currentCtx);
+  // Climat, vent et eau (données de grille ou à 15 km) ne bougent pas pour
+  // quelques dizaines de mètres : seuls les modules liés à l'emprise sont relancés.
+  await runModules(currentCtx, (m) => m.scope === "quartier" || m.id === "reglementaire");
+  refreshSynthese();
+});
+
 // --- Recherche ---------------------------------------------------------------
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -174,9 +210,14 @@ async function analyze(query: string, preset: GeocodeResult | null): Promise<voi
     modulesEl.innerHTML = `<p class="error">Adresse introuvable. Vérifiez l'orthographe ou ajoutez la commune.</p>`;
     return;
   }
+  // Périmètre retenu pour ce point lors d'une visite précédente.
+  const retenu = relire(ctx.pointAdresse.lat + "," + ctx.pointAdresse.lon);
+  if (retenu) ctx = avecPerimetre(ctx, retenu);
   currentCtx = ctx;
 
   focusSite(ctx); // dessine aussi le cercle de rayon
+  afficherPerimetre(ctx);
+  if (ctx.perimetre) cadrerPerimetre(ctx.perimetre.contour);
   lienAtelier.hidden = false;
   if (atelier) void atelier.setSite(ctx);
   siteInfoEl.hidden = false;
@@ -241,7 +282,8 @@ function refreshSynthese(): void {
 
 function updateSiteInfo(ctx: SiteContext): void {
   const alt = ctx.altitude !== null ? `${ctx.altitude} m` : "n.d.";
-  const perimetre = ctx.radiusM !== null ? `périmètre ${ctx.radiusM} m` : "échelle parcelle";
+  const rayon = ctx.radiusM !== null ? `rayon ${ctx.radiusM} m` : "échelle parcelle";
+  const perimetre = ctx.perimetre ? `périmètre de projet : ${resumePerimetre(ctx.perimetre)} — ${rayon} autour de son centre` : rayon;
   const secours =
     ctx.geocodeSource === "osm"
       ? " — adresse localisée via OpenStreetMap (service d'adresses IGN indisponible) : vérifiez le repère"

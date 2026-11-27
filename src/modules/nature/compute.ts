@@ -9,6 +9,7 @@
 import { CLASSES_COSIA, indicateursSol, type ClasseCosia, type IndicateursSol } from "../../core/cosia";
 import type { NatureRaw, ProtectedZoneItem } from "./fetch";
 import { polygonAreaM2 } from "../../core/geo";
+import type { SiteContext } from "../../core/types";
 
 export interface NatureResult {
   effectiveRadiusM: number;
@@ -27,6 +28,12 @@ export interface NatureResult {
   protectedZonesFetchFailed: boolean;
   /** Couverture du sol mesurée (CoSIA, IGN) ; null si indisponible. */
   sol: (IndicateursSol & { millesime: string; couverturePct: number; parts: { id: ClasseCosia; titre: string; couleur: string; pct: number }[] }) | null;
+  /** Couverture du sol dans le périmètre de projet (CoSIA) ; null sans périmètre ou si indisponible. */
+  solPerimetre: (IndicateursSol & { millesime: string; couverturePct: number; surfaceM2: number }) | null;
+  /** Un périmètre de projet était défini (même si sa mesure a échoué). */
+  avecPerimetre: boolean;
+  /** Zonages de protection lus sur le périmètre de projet plutôt qu'au point. */
+  protectionsSurPerimetre: boolean;
   /** Source des pourcentages végétalisé / canopée. */
   sourceVerdure: "CoSIA" | "OSM";
   /** Canopée mesurée (LiDAR HD × CoSIA) ; null si indisponible. */
@@ -45,7 +52,7 @@ function pct(part: number, whole: number): number {
   return Math.min(100, Math.round((part / whole) * 1000) / 10);
 }
 
-export function computeNature(raw: NatureRaw): NatureResult {
+export function computeNature(raw: NatureRaw, ctx?: SiteContext): NatureResult {
   const circleAreaM2 = Math.PI * raw.effectiveRadiusM ** 2;
 
   const greenAreaM2 = Math.round(sumArea(raw.greenPolygons));
@@ -73,7 +80,13 @@ export function computeNature(raw: NatureRaw): NatureResult {
     espaceVert300: raw.espaceVert300,
     lidar: raw.lidar,
     sourceCanopee: "OSM",
+    solPerimetre: null,
+    avecPerimetre: !!ctx?.perimetre,
+    protectionsSurPerimetre: raw.protectionsSurPerimetre,
   };
+  const cp = raw.cosiaPerimetre;
+  if (cp && cp.totalM2 > 0)
+    res.solPerimetre = { ...indicateursSol(cp), millesime: cp.millesime, couverturePct: Math.round(cp.couverturePct), surfaceM2: ctx?.perimetre?.surfaceGeomM2 ?? Math.round(cp.totalM2) };
   if (raw.cosia && raw.cosia.totalM2 > 0) {
     const ind = indicateursSol(raw.cosia);
     const tot = raw.cosia.totalM2;

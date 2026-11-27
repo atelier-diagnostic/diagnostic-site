@@ -30,15 +30,47 @@ function patrimoineBlock(r: ReglementaireResult): string {
     ? ` Monument historique le plus proche : <strong>${esc(r.mhPlusProche.nom)}</strong>, à ${r.mhPlusProche.distanceM} m.`
     : "";
   if (!r.patrimoineAuPoint.length)
-    return `<p>Aucune protection patrimoniale publiée au point (monument historique, abords, site, site patrimonial remarquable).${proche}</p>
+    return `<p>Aucune protection patrimoniale publiée ${r.surPerimetre ? "sur le périmètre de projet" : "au point"} (monument historique, abords, site, site patrimonial remarquable).${proche}</p>
       <p class="module-note">Toutes les servitudes ne sont pas encore publiées sur le Géoportail de l'Urbanisme : à confirmer sur l'Atlas des patrimoines ou auprès de l'UDAP. Carte dans l'atelier, thème Patrimoine.</p>`;
   const lignes = r.patrimoineAuPoint
-    .map((p) => `<li>Le site est ${GENRE_TXT[p.genre]}${p.libelle ? ` : <strong>${esc(p.libelle)}</strong>` : ""}.</li>`)
+    .map((p) => `<li>${r.surPerimetre ? "Le périmètre est (au moins en partie)" : "Le site est"} ${GENRE_TXT[p.genre]}${p.libelle ? ` : <strong>${esc(p.libelle)}</strong>` : ""}.</li>`)
     .join("");
   const abf = r.patrimoineAuPoint.some((p) => p.genre !== "site")
     ? `<p>Les travaux y sont soumis à l'Architecte des Bâtiments de France (UDAP) : à associer tôt au projet.</p>`
     : `<p>En site classé, les travaux relèvent d'une autorisation spéciale (ministre ou préfet) ; en site inscrit, d'une déclaration préalable avec avis de l'ABF.</p>`;
   return `<ul class="reg-list">${lignes}</ul>${abf}<p class="module-note">${proche.trim()} Carte dans l'atelier, thème Patrimoine.</p>`;
+}
+
+/** Zones du PLU et argiles sur le périmètre de projet. */
+function perimetreBlock(r: ReglementaireResult): string {
+  if (!r.surPerimetre) return "";
+  const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+  const zones =
+    r.zonagesPerimetre === null
+      ? `<p class="error">Zones du PLU sur le périmètre indisponibles (Géoportail de l'Urbanisme muet). Ce n'est pas une absence de zonage.</p>`
+      : r.zonagesPerimetre.length === 0
+        ? `<p class="module-note">Aucune zone du PLU publiée sur le périmètre de projet (RNU, ou document non publié sur le GPU).</p>`
+        : `<table class="reg-table"><thead><tr><th>Zone du PLU</th><th>Part du périmètre</th><th>Règlement</th></tr></thead><tbody>${r.zonagesPerimetre
+            .map(
+              (z) =>
+                `<tr><td><strong>${esc(z.libelle)}</strong>${z.typezone ? ` <span class="module-note">(${esc(z.typezone)})</span>` : ""}</td><td>${fr(z.pct)} %</td><td>${
+                  z.urlfic ? `<a href="${esc(z.urlfic)}" target="_blank" rel="noopener">Ouvrir ↗</a>` : `<span class="module-note">non publié</span>`
+                }</td></tr>`,
+            )
+            .join("")}</tbody></table>${
+            r.zonagesPerimetre.length > 1 ? `<p><strong>Le périmètre est à cheval sur ${r.zonagesPerimetre.length} zones</strong> : chaque partie suit le règlement de sa zone.</p>` : ""
+          }`;
+  const argiles = r.rgaParcelles.length
+    ? `<table class="reg-table"><thead><tr><th>Parcelle</th><th>Argiles (RGA)</th></tr></thead><tbody>${r.rgaParcelles
+        .map((x) => `<tr><td>${esc(x.court)}</td><td>${x.exposition ? esc(x.exposition) : `<span class="module-note">n.d.</span>`}</td></tr>`)
+        .join("")}</tbody></table>`
+    : "";
+  return `
+    <h3 class="module-subtitle">Sur le périmètre de projet</h3>
+    ${zones}
+    ${argiles}
+    <p class="module-note">Zones : surfaces découpées au contour des parcelles (zones qui ne font que toucher la limite écartées).
+    Argiles : exposition au centre de chaque parcelle. Les servitudes et protections patrimoniales ci-dessous sont celles qui touchent le périmètre.</p>`;
 }
 
 export function renderReglementaire(el: HTMLElement, r: ReglementaireResult): void {
@@ -73,7 +105,7 @@ export function renderReglementaire(el: HTMLElement, r: ReglementaireResult): vo
             )
             .join("")}</ul>`
         : `<p class="module-note">Aucune servitude d'utilité publique détectée sur le Géoportail de
-           l'Urbanisme pour ce point. Rappel : la totalité des SUP n'est pas encore publiée sur le
+           l'Urbanisme ${r.surPerimetre ? "sur le périmètre de projet" : "pour ce point"}. Rappel : la totalité des SUP n'est pas encore publiée sur le
            GPU — une absence de résultat ne garantit pas leur absence réelle.</p>`;
 
   const naturels = r.risquesPresents.filter((f) => f.famille === "naturel");
@@ -126,7 +158,9 @@ export function renderReglementaire(el: HTMLElement, r: ReglementaireResult): vo
       ${indicator("Arrêtés CatNat (communes < 1 km)", r.catnatCount === null ? "n.d." : `${r.catnatCount}`)}
     </div>
 
-    <h3 class="module-subtitle">Zonage PLU</h3>
+    ${perimetreBlock(r)}
+
+    <h3 class="module-subtitle">Zonage PLU${r.surPerimetre ? ` <span class="sub-note">au centre du périmètre</span>` : ""}</h3>
     ${zonageBlock}
 
     <h3 class="module-subtitle">Servitudes d'utilité publique</h3>

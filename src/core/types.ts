@@ -5,6 +5,7 @@
 // de consommer le SiteContext. Rien d'autre.
 // ---------------------------------------------------------------------------
 import type { Parcelle } from "./cadastre";
+import type { Perimetre } from "./perimetre";
 
 /** Contexte du site, construit UNE fois après géocodage. Partagé par tous les modules. */
 export interface SiteContext {
@@ -33,6 +34,14 @@ export interface SiteContext {
   radiusM: number | null;
   /** Parcelle cadastrale réelle (IGN PCI) si trouvée, null sinon — voir src/core/cadastre.ts. */
   parcelle: Parcelle | null;
+  /**
+   * Périmètre de projet (parcelles choisies ou contour importé), null sinon.
+   * Quand il existe, `lat`/`lon` sont son centre : le point d'analyse et le
+   * rayon s'y recentrent (voir src/core/perimetre.ts).
+   */
+  perimetre: Perimetre | null;
+  /** Point de l'adresse géocodée (avant un éventuel recentrage sur le périmètre). */
+  pointAdresse: { lat: number; lon: number };
 }
 
 /** Un graphe prêt à être rendu (par Chart.js) et exporté. */

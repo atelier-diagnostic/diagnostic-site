@@ -2057,7 +2057,7 @@ export function createAtelier(root: HTMLElement, options: OptionsAtelier = {}): 
   function eclairer(sun: { azimuthDeg: number; elevationDeg: number } | null): void {
     dernierSoleil = sun;
     if (!sun) {
-      map.setLight({ anchor: "viewport", position: [1.15, 210, 30], color: "#ffffff", intensity: 0.5 });
+      map.setLight({ anchor: "viewport", position: [1.15, 210, 30], color: "#ffffff", intensity: 0.35 });
       coucheArbres.setSoleil(null);
       coucheCanopee3D.setSoleil(null);
       coucheBati3D.setSoleil(null);
@@ -2066,7 +2066,7 @@ export function createAtelier(root: HTMLElement, options: OptionsAtelier = {}): 
     const neutre = coloration === "neutre";
     const el = sun.elevationDeg;
     if (el <= 0.5) {
-      map.setLight({ anchor: "map", position: [1.5, sun.azimuthDeg, 80], color: neutre ? "#8a93b8" : "#ffffff", intensity: neutre ? 0.45 : 0.3 });
+      map.setLight({ anchor: "map", position: [1.5, sun.azimuthDeg, 80], color: neutre ? "#8a93b8" : "#ffffff", intensity: neutre ? 0.3 : 0.25 });
       coucheArbres.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
       coucheCanopee3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
       coucheBati3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: 0, couleur: 0x8a93b8, intensite: 0 });
@@ -2081,7 +2081,8 @@ export function createAtelier(root: HTMLElement, options: OptionsAtelier = {}): 
       anchor: "map",
       position: [1.5, sun.azimuthDeg, Math.max(5, 90 - el)],
       color: neutre ? `#${hex.toString(16).padStart(6, "0")}` : "#ffffff",
-      intensity: neutre ? 0.72 + 0.13 * t : 0.6,
+      // Contraste adouci (27/11) : façades à l'ombre gris moyen, plus jamais noires.
+      intensity: neutre ? 0.42 + 0.08 * t : 0.4,
     });
     coucheArbres.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });
     coucheCanopee3D.setSoleil({ azimut: sun.azimuthDeg, hauteur: el, couleur: hex, intensite: t });

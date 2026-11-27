@@ -343,7 +343,7 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
   let renderer: THREE.WebGLRenderer | null = null;
   const scene = new THREE.Scene();
   const camera = new THREE.Camera();
-  const ciel = new THREE.HemisphereLight(0xf2f0ea, 0x6a6458, 1.05);
+  const ciel = new THREE.HemisphereLight(0xf2f0ea, 0x9c968a, 1.05); // sol clair : faces à l'ombre adoucies
   const soleil = new THREE.DirectionalLight(0xfff4e0, 1.2);
   soleil.position.set(-60, 120, 80);
   scene.add(ciel, soleil);
@@ -716,13 +716,13 @@ export function creerCoucheBati3D(id: string): CoucheBati3D {
         ciel.intensity = 1.05;
       } else if (s.hauteur <= 0) {
         soleil.intensity = 0;
-        ciel.intensity = 0.4;
+        ciel.intensity = 0.65;
       } else {
         const az = (s.azimut * Math.PI) / 180, el = (s.hauteur * Math.PI) / 180;
         soleil.position.set(Math.sin(az) * Math.cos(el) * 100, Math.sin(el) * 100, -Math.cos(az) * Math.cos(el) * 100);
         soleil.color.setHex(s.couleur);
-        soleil.intensity = 0.6 + 1.0 * s.intensite;
-        ciel.intensity = 0.6 + 0.45 * s.intensite;
+        soleil.intensity = 0.5 + 0.8 * s.intensite;
+        ciel.intensity = 0.85 + 0.35 * s.intensite;
       }
       map?.triggerRepaint();
     },

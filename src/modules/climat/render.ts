@@ -7,7 +7,7 @@ import { analyserUtci } from "./utci";
 import { afficherUtci } from "./utci-rendu";
 import { chargerReference, encartsReference, brancherEncarts } from "./reference";
 import { tempPrecipConfig, rayonnementConfig } from "./charts";
-import { headline, chiffresCles, trajectoires, calendrier, bandes } from "./fiche";
+import { headline, chiffresCles, trajectoires, calendrier, bandes, pluies, repereClimadiag } from "./fiche";
 import type { ChartConfiguration } from "chart.js";
 import { koppen, traits, zoneRE2020, MOIS_LONGS } from "./caractere";
 
@@ -40,7 +40,7 @@ export function blocCaractere(r: ClimatResult): string {
         <b>${k.nom}</b>
         <p>${k.description}</p>
         <p class="module-note">Calculée sur les normales du site : ${k.criteres.join(" · ")}.</p>
-        ${glissements ? `<ul class="koppen-glissement"><li class="titre">Avec les températures projetées (pluies supposées inchangées) :</li>${glissements}</ul>` : ""}
+        ${glissements ? `<ul class="koppen-glissement"><li class="titre">Avec les températures projetées (pluies laissées à leurs normales) :</li>${glissements}</ul>` : ""}
       </div>
     </div>
     <div class="indicators">
@@ -86,6 +86,9 @@ export function renderClimat(el: HTMLElement, r: ClimatResult): void {
         ${trajectoires(r)}
         <h3 class="module-subtitle">Calendrier des nuits tropicales <span class="sub-note">nuits par mois</span></h3>
         ${calendrier(r)}
+        <h3 class="module-subtitle">Pluies par saison <span class="sub-note">cumuls moyens</span></h3>
+        ${pluies(r)}
+        ${repereClimadiag(r)}
         <h3 class="module-subtitle">Le site parmi d'autres lieux</h3>
         <div data-reference><p class="placeholder">Chargement des villes de référence…</p></div>`;
 
@@ -127,8 +130,8 @@ export function renderClimat(el: HTMLElement, r: ClimatResult): void {
     ${blocCaractere(r)}
     <h3 class="module-subtitle">Confort extérieur <span class="sub-note">UTCI · heures observées 2016-2025</span></h3>
     <div data-utci><p class="placeholder">Chargement des heures observées (10 ans)…</p></div>
-    <p class="fiche-contexte">Horizons de la trajectoire de référence française (TRACC) :
-    +2 °C en 2030, +2,7 °C en 2050.</p>
+    <p class="fiche-contexte">Horizons par périodes (2021-2035 et 2036-2050), scénario d'émissions élevées :
+    proches, sans s'y confondre, des niveaux de la trajectoire de référence française (TRACC, +2 °C en 2030 et +2,7 °C en 2050 en France).</p>
     ${fiche}
     <h3 class="module-subtitle">Réchauffement déjà observé <span class="sub-note">1950 – 2025 · mesures</span></h3>
     <div data-bandes>${bandes(undefined)}</div>

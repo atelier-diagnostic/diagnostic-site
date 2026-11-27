@@ -11,7 +11,18 @@ import {
   type ParcelleChoisie,
   type Perimetre,
 } from "../core/perimetre";
-import { setSelectionParcelles, afficherSelection, cadrerPerimetre } from "../map/map";
+import type { MultiPolygone } from "../core/perimetre";
+import { lireContour } from "../core/import-contour";
+
+/** Ce que le panneau demande à la carte qui l'accompagne (Leaflet du diagnostic ou MapLibre de l'atelier). */
+export interface CarteSelection {
+  /** Mode de choix des parcelles : cadastre affiché, chaque clic transmis ; null pour en sortir. */
+  setSelection(onClic: ((lat: number, lon: number) => void) | null): void;
+  /** Parcelles en cours de choix. */
+  afficherSelection(parcelles: ParcelleChoisie[]): void;
+  /** Cadre la carte sur un contour. */
+  cadrer(contour: MultiPolygone): void;
+}
 
 interface SitePanneau {
   insee?: string;
@@ -44,6 +55,7 @@ function esc(t: string): string {
 
 export function attachPerimetrePanel(
   root: HTMLElement,
+  carte: CarteSelection,
   /** Applique le périmètre (null : le retire) ; relance le diagnostic. */
   onApply: (p: Perimetre | null) => Promise<void> | void,
 ): PanneauPerimetre {
@@ -107,7 +119,7 @@ export function attachPerimetrePanel(
       <div class="pp-actions">
         <button type="button" data-a="appliquer" class="btn-primary"${occupe ? " disabled" : ""}>Appliquer au diagnostic</button>
         <button type="button" data-a="annuler" class="btn-lien">Annuler</button>
-        <label class="btn-lien pp-import">Importer un contour (GeoJSON)<input type="file" accept=".geojson,.json,application/geo+json,application/json" hidden /></label>
+        <label class="btn-lien pp-import">Importer un contour (GeoJSON, KML, KMZ)<input type="file" accept=".geojson,.json,.kml,.kmz,application/geo+json,application/json,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden /></label>
       </div>`;
   }
 
@@ -117,8 +129,8 @@ export function attachPerimetrePanel(
     choix = p && p.source === "cadastre" ? [...p.parcelles] : [];
     importe = p && p.source === "import" ? p : null;
     message = "";
-    setSelectionParcelles((lat, lon) => void basculerAuPoint(lat, lon));
-    afficherSelection(choix);
+    carte.setSelection((lat, lon) => void basculerAuPoint(lat, lon));
+    carte.afficherSelection(choix);
     rendre();
     // Premier choix : la parcelle de l'adresse est proposée d'office.
     if (!p && site?.pointAdresse) void basculerAuPoint(site.pointAdresse.lat, site.pointAdresse.lon);
@@ -127,7 +139,7 @@ export function attachPerimetrePanel(
   function sortir(): void {
     edition = false;
     message = "";
-    setSelectionParcelles(null);
+    carte.setSelection(null);
     rendre();
   }
 
@@ -158,7 +170,7 @@ export function attachPerimetrePanel(
       choix.push(p);
       message = `Parcelle ${p.court} ajoutée (${fr(p.surfaceM2)} m²).`;
     }
-    afficherSelection(choix);
+    carte.afficherSelection(choix);
   }
 
   root.addEventListener("click", async (e) => {
@@ -167,7 +179,7 @@ export function attachPerimetrePanel(
     if (retirer) {
       choix = choix.filter((x) => x.id !== retirer.dataset.retirer);
       message = "";
-      afficherSelection(choix);
+      carte.afficherSelection(choix);
       rendre();
       return;
     }
@@ -180,8 +192,8 @@ export function attachPerimetrePanel(
     else if (a === "appliquer") {
       const p = brouillon();
       edition = false;
-      setSelectionParcelles(null);
-      if (p) cadrerPerimetre(p.contour);
+      carte.setSelection(null);
+      if (p) carte.cadrer(p.contour);
       await onApply(p);
     }
   });
@@ -200,7 +212,7 @@ export function attachPerimetrePanel(
         if (choix.some((x) => x.id === p.id)) message = `Parcelle ${p.court} déjà choisie.`;
         else ajouterOuRetirer(p);
         const b = brouillon();
-        if (b) cadrerPerimetre(b.contour);
+        if (b) carte.cadrer(b.contour);
       }
     } catch (err) {
       message = err instanceof Error && /Référence attendue/.test(err.message) ? err.message : "Le service API Carto (cadastre) ne répond pas. Cliquez plutôt sur la parcelle.";
@@ -215,17 +227,18 @@ export function attachPerimetrePanel(
     const input = e.target as HTMLInputElement;
     if (input.type !== "file" || !input.files?.[0]) return;
     try {
-      const p = perimetreImporte(JSON.parse(await input.files[0].text()));
-      if (!p) message = "Aucun polygone lisible : un GeoJSON en coordonnées WGS84 (degrés) est attendu.";
+      const p = perimetreImporte(await lireContour(input.files[0]));
+      if (!p) message = "Aucun polygone lisible : un GeoJSON, KML ou KMZ en coordonnées WGS84 (degrés) est attendu.";
       else {
         importe = p;
         choix = [];
-        afficherSelection([]);
-        cadrerPerimetre(p.contour);
+        carte.afficherSelection([]);
+        carte.cadrer(p.contour);
         message = `Contour importé : ${surfaceTexte(p)}.`;
       }
     } catch {
-      message = "Fichier illisible : un GeoJSON est attendu.";
+      input.value = "";
+      message = "Fichier illisible : GeoJSON, KML ou KMZ attendu.";
     }
     rendre();
   });

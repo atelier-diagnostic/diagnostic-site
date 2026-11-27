@@ -276,7 +276,7 @@ function habillageSvg(r: Reglages, g: ReturnType<typeof gabarit>, solW: number, 
         const px = lx + (k % 2) * (cw / 2);
         const py = ly + Math.floor(k / 2) * pas;
         const c = couleur(p.couleur);
-        leg.push(`<rect x="${n2(px)}" y="${n2(py - 2.4 * f)}" width="${n2(3 * f)}" height="${n2(2.4 * f)}" fill="${c?.hex ?? p.couleur}"/>`);
+        leg.push(`<rect x="${n2(px)}" y="${n2(py - 2.4 * f)}" width="${n2(3 * f)}" height="${n2(2.4 * f)}" fill="${c?.hex ?? p.couleur}" stroke="#a0a0a0" stroke-width="0.1"/>`);
         leg.push(txt(couper(p.libelle, cw / 2 - 5 * f, 6 * f * PT)[0] ?? p.libelle, px + 4 * f, py - 0.3 * f, 6 * f));
       });
       ly += Math.ceil(el.pastilles.length / 2) * pas;

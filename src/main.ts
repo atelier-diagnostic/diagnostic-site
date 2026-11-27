@@ -23,8 +23,11 @@ import {
   moveSiteMarker,
   updatePerimetreLayer,
   cadrerPerimetre,
+  setSelectionParcelles,
+  afficherSelection,
 } from "./map/map";
 import { relire, memoriser, type Perimetre } from "./core/perimetre";
+import { disponibiliteLidar, texteDispoLidar, LIBELLE_DISPO_COURT } from "./core/lidar-dispo";
 import { attachPerimetrePanel, resumePerimetre } from "./ui/perimetre-panel";
 import { manualPoint, type GeocodeResult } from "./core/geocode";
 import { distanceMeters } from "./core/geo";
@@ -83,7 +86,7 @@ let atelierChargement: Promise<import("./atelier/atelier").Atelier> | null = nul
 async function getAtelier() {
   if (atelier) return atelier;
   atelierChargement ??= import("./atelier/atelier")
-    .then((m) => m.createAtelier(vueAtelier))
+    .then((m) => m.createAtelier(vueAtelier, { onPerimetre: appliquerPerimetre }))
     .catch((e: unknown) => {
       // Page ouverte avant une mise en ligne : l'ancien fichier de l'atelier
       // n'existe plus sur le serveur (« Failed to fetch dynamically imported
@@ -160,7 +163,8 @@ function afficherPerimetre(ctx: SiteContext): void {
   panneauPerimetre.setSite(ctx);
 }
 
-const panneauPerimetre = attachPerimetrePanel(document.getElementById("perimetre-panel")!, async (p) => {
+/** Applique un périmètre (choisi sous la carte du diagnostic ou dans l'atelier) et relance les modules liés à l'emprise. */
+async function appliquerPerimetre(p: Perimetre | null): Promise<void> {
   if (!currentCtx) return;
   memoriser(currentCtx.pointAdresse.lat + "," + currentCtx.pointAdresse.lon, p);
   currentCtx = avecPerimetre(currentCtx, p);
@@ -171,7 +175,13 @@ const panneauPerimetre = attachPerimetrePanel(document.getElementById("perimetre
   // quelques dizaines de mètres : seuls les modules liés à l'emprise sont relancés.
   await runModules(currentCtx, (m) => m.scope === "quartier" || m.id === "reglementaire");
   refreshSynthese();
-});
+}
+
+const panneauPerimetre = attachPerimetrePanel(
+  document.getElementById("perimetre-panel")!,
+  { setSelection: setSelectionParcelles, afficherSelection, cadrer: cadrerPerimetre },
+  appliquerPerimetre,
+);
 
 // --- Recherche ---------------------------------------------------------------
 form.addEventListener("submit", async (e) => {
@@ -289,6 +299,17 @@ function updateSiteInfo(ctx: SiteContext): void {
       ? " — adresse localisée via OpenStreetMap (service d'adresses IGN indisponible) : vérifiez le repère"
       : "";
   siteInfoEl.textContent = `${ctx.label} — altitude ${alt} — ${perimetre}${secours}`;
+  // Disponibilité du LiDAR HD, dite d'emblée : elle conditionne relief, canopée et volumes.
+  const badge = document.createElement("span");
+  badge.className = "lidar-badge";
+  badge.textContent = "LiDAR HD : vérification…";
+  siteInfoEl.append(" ", badge);
+  void disponibiliteLidar(ctx.lat, ctx.lon, ctx.radiusM ?? 150).then((d) => {
+    if (!badge.isConnected) return;
+    badge.dataset.etat = d.etat;
+    badge.textContent = `LiDAR HD : ${LIBELLE_DISPO_COURT[d.etat]}`;
+    badge.title = texteDispoLidar(d);
+  });
 }
 
 // --- Exécution des modules ---------------------------------------------------

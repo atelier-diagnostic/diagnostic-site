@@ -1018,3 +1018,15 @@ body[data-vue="atelier"] { overflow: hidden; }
 @media (min-width: 901px) {
   .col-map:has(> .perimetre-panel:not([hidden])) .map-wrap { height: calc(100vh - var(--header-h) - 64px - 150px); }
 }
+
+/* Disponibilité du LiDAR HD (diagnostic et atelier) */
+.lidar-badge, .at-lidar-pastille { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.6; white-space: nowrap; border: 1px solid var(--border-strong); color: var(--muted); }
+.lidar-badge[data-etat="publie"], .at-lidar-pastille[data-etat="publie"] { background: #e3f1e0; border-color: #9cc79a; color: #24602a; }
+.lidar-badge[data-etat="partiel"], .at-lidar-pastille[data-etat="partiel"] { background: #fdf1d8; border-color: #e5c27a; color: #7a5500; }
+.lidar-badge[data-etat="absent"], .at-lidar-pastille[data-etat="absent"] { background: #f9e1df; border-color: #e3a39d; color: #8e2a22; }
+.at-lidar-pastille { margin-left: 6px; font-weight: 500; }
+.at-lidar-dispo { margin: 2px 0 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4; background: var(--hover); color: var(--ink-2); }
+.at-lidar-dispo[data-etat="publie"] { background: #e3f1e0; color: #24602a; }
+.at-lidar-dispo[data-etat="partiel"] { background: #fdf1d8; color: #7a5500; }
+.at-lidar-dispo[data-etat="absent"] { background: #f9e1df; color: #8e2a22; }
+[data-at-perimetre] { margin: 2px 0 10px; }

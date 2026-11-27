@@ -11,6 +11,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { fetchJson } from "../api/client";
 import { fetchBuildingsWithHeight, BUILDING_SOURCE_LABEL, type BuildingsResult } from "../core/buildings";
 import { bboxAroundMeters } from "../core/geo";
+import { attachPerimetrePanel } from "../ui/perimetre-panel";
+import type { Perimetre } from "../core/perimetre";
+import { disponibiliteLidar, texteDispoLidar, LIBELLE_DISPO_COURT } from "../core/lidar-dispo";
 import type { SiteContext } from "../core/types";
 import { fetchTrees, type ArbreOsm } from "../modules/soleil/fetch";
 import { creerCoucheCourseSoleil } from "./course-soleil";
@@ -129,7 +132,12 @@ function webglDisponible(): boolean {
   }
 }
 
-export function createAtelier(root: HTMLElement): Atelier {
+export interface OptionsAtelier {
+  /** Périmètre de projet choisi dans l'atelier : appliqué à tout l'outil (diagnostic compris). */
+  onPerimetre?: (p: Perimetre | null) => Promise<void> | void;
+}
+
+export function createAtelier(root: HTMLElement, options: OptionsAtelier = {}): Atelier {
   const famillesRepliees = new Set<string>();
   try {
     for (const f of JSON.parse(localStorage.getItem(CLE_REPLIEES) ?? "[]") as string[]) famillesRepliees.add(f);
@@ -360,9 +368,9 @@ export function createAtelier(root: HTMLElement): Atelier {
             `<section class="at-famille${famillesRepliees.has(f) ? " repliee" : ""}" data-famille="${f}">
               <h3><button type="button" class="at-famille-btn" aria-expanded="${!famillesRepliees.has(f)}">
                 <svg class="at-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span>${f}</span><span class="at-famille-n"></span>
+                <span>${f}</span>${f === "LiDAR HD" ? `<span class="at-lidar-pastille" data-lidar-pastille hidden></span>` : ""}<span class="at-famille-n"></span>
               </button></h3>
-              <div class="at-famille-corps">${COUCHES.filter((c) => c.famille === f).map(ligne).join("")}</div>
+              <div class="at-famille-corps">${f === "Repères" ? `<div data-at-perimetre></div>` : ""}${f === "LiDAR HD" ? `<p class="at-lidar-dispo" data-lidar-dispo>Disponibilité du LiDAR HD : recherchez une adresse.</p>` : ""}${COUCHES.filter((c) => c.famille === f).map(ligne).join("")}</div>
             </section>`,
         ).join("")}
       </div>
@@ -492,6 +500,7 @@ export function createAtelier(root: HTMLElement): Atelier {
         "ombres-arbres": vecteur(),
         perimetre: vecteur(),
         "perimetre-projet": vecteur(),
+        "perimetre-selection": vecteur(),
         carroyage: vecteur(),
         courbes: vecteur(),
         isochrones: vecteur(),
@@ -672,6 +681,9 @@ export function createAtelier(root: HTMLElement): Atelier {
         },
         { id: "perimetre", type: "line", source: "perimetre", paint: { "line-color": "#3a3a3c", "line-width": 1.5, "line-dasharray": [3, 2] } },
         // Périmètre de projet : trait épais, même rouge que la carte du diagnostic.
+        // Parcelles en cours de choix (pendant la sélection seulement).
+        { id: "perimetre-selection-fond", type: "fill", source: "perimetre-selection", paint: { "fill-color": "#c4322b", "fill-opacity": 0.22 } },
+        { id: "perimetre-selection-ligne", type: "line", source: "perimetre-selection", paint: { "line-color": "#c4322b", "line-width": 1.5 } },
         { id: "perimetre-projet", type: "line", source: "perimetre-projet", layout: { "line-join": "round" }, paint: { "line-color": "#c4322b", "line-width": 3 } },
         // Coupe de terrain : trait A–B (posé sur le relief en 3D), points clés, curseur du profil.
         { id: "coupe-halo", type: "line", source: "coupe", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round" }, paint: { "line-color": "#ffffff", "line-width": 5, "line-opacity": 0.85 } },
@@ -1682,6 +1694,10 @@ export function createAtelier(root: HTMLElement): Atelier {
     if (ev.key === "Escape" && trace !== "aucun") fermerCoupe();
   });
   map.on("click", (ev) => {
+    if (choixParcelles && trace === "aucun") {
+      choixParcelles(ev.lngLat.lat, ev.lngLat.lng);
+      return;
+    }
     if (trace !== "aucun") evtCoupe = ev.originalEvent;
     if (trace === "A") {
       ptA = [ev.lngLat.lng, ev.lngLat.lat];
@@ -1941,7 +1957,7 @@ export function createAtelier(root: HTMLElement): Atelier {
     }
   }
   map.on("click", "equipements", (ev) => {
-      if (trace !== "aucun" || ev.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
+      if (choixParcelles || trace !== "aucun" || ev.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
     const f = ev.features?.[0];
     if (!f) return;
     const pr = f.properties as { nom: string; titre: string; minutes: number };
@@ -1984,7 +2000,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   }
   for (const lid of ["patrimoine-mh", "patrimoine-abords", "patrimoine-sites", "patrimoine-spr"]) {
     map.on("click", lid, (ev) => {
-      if (trace !== "aucun" || ev.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
+      if (choixParcelles || trace !== "aucun" || ev.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
       const f = ev.features?.[0];
       if (!f) return;
       const pr = f.properties as { nom: string; titre: string; type: string };
@@ -2297,7 +2313,7 @@ export function createAtelier(root: HTMLElement): Atelier {
   // --- Fiche d'un bâtiment ----------------------------------------------------------
   for (const lid of ["bati-2d", "bati-3d"]) {
     map.on("click", lid, (e) => {
-      if (trace !== "aucun" || e.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
+      if (choixParcelles || trace !== "aucun" || e.originalEvent === evtCoupe) return; // tracé d'une coupe en cours
       const p = e.features?.[0]?.properties as Record<string, unknown> | undefined;
       if (!p) return;
       const lignes = [
@@ -2312,6 +2328,67 @@ export function createAtelier(root: HTMLElement): Atelier {
     map.on("mouseleave", lid, () => (map.getCanvas().style.cursor = ""));
   }
 
+  // --- Périmètre de projet : choix des parcelles dans l'atelier ----------------------------
+  // Même panneau que sous la carte du diagnostic, branché sur MapLibre ; le
+  // périmètre appliqué vaut pour tout l'outil (options.onPerimetre).
+  let choixParcelles: ((lat: number, lon: number) => void) | null = null;
+  let cadastreAvantChoix: boolean | null = null;
+  function basculerCouche(id: string, actif: boolean): void {
+    const sw = root.querySelector<HTMLInputElement>(`.at-couche[data-couche="${id}"] .switch`);
+    if (!sw || sw.checked === actif) return;
+    sw.checked = actif;
+    sw.dispatchEvent(new Event("change"));
+  }
+  const panneauAtelier = attachPerimetrePanel(
+    q<HTMLElement>("[data-at-perimetre]"),
+    {
+      setSelection(onClic) {
+        choixParcelles = onClic;
+        map.getCanvas().style.cursor = onClic ? "crosshair" : "";
+        if (onClic) {
+          // Le cadastre s'affiche le temps du choix, puis revient à son état.
+          cadastreAvantChoix ??= etat.get("cadastre")!.actif;
+          basculerCouche("cadastre", true);
+          if (map.getZoom() < 17) map.easeTo({ zoom: 17.5 });
+        } else {
+          if (cadastreAvantChoix !== null) basculerCouche("cadastre", cadastreAvantChoix);
+          cadastreAvantChoix = null;
+          (map.getSource("perimetre-selection") as maplibregl.GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: [] });
+        }
+      },
+      afficherSelection(parcelles) {
+        (map.getSource("perimetre-selection") as maplibregl.GeoJSONSource | undefined)?.setData({
+          type: "FeatureCollection",
+          features: parcelles.map((x) => ({ type: "Feature", properties: { court: x.court }, geometry: { type: "MultiPolygon", coordinates: x.geometrie } })),
+        });
+      },
+      cadrer(contour) {
+        const pts = contour.flatMap((poly) => poly[0]);
+        const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]);
+        map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 80, maxZoom: 19, duration: 600 });
+      },
+    },
+    async (p) => {
+      await options.onPerimetre?.(p);
+    },
+  );
+
+  // --- Disponibilité du LiDAR HD au site ------------------------------------------------
+  async function afficherDispoLidar(ctx: SiteContext): Promise<void> {
+    const texte = q<HTMLElement>("[data-lidar-dispo]");
+    const pastille = q<HTMLElement>("[data-lidar-pastille]");
+    texte.textContent = "Disponibilité du LiDAR HD : vérification…";
+    texte.dataset.etat = "";
+    pastille.hidden = true;
+    const d = await disponibiliteLidar(ctx.lat, ctx.lon, ctx.radiusM ?? 150);
+    if (site !== ctx) return;
+    texte.dataset.etat = d.etat;
+    pastille.dataset.etat = d.etat;
+    pastille.hidden = false;
+    pastille.textContent = LIBELLE_DISPO_COURT[d.etat];
+    texte.textContent = texteDispoLidar(d);
+  }
+
   // --- Site ----------------------------------------------------------------------------
   let marker: maplibregl.Marker | null = null;
   async function setSite(ctx: SiteContext): Promise<void> {
@@ -2319,6 +2396,8 @@ export function createAtelier(root: HTMLElement): Atelier {
     const memePoint = site && site.lat === ctx.lat && site.lon === ctx.lon;
     site = ctx;
     vide.hidden = true;
+    panneauAtelier.setSite(ctx);
+    void afficherDispoLidar(ctx);
     const pp = ctx.perimetre;
     q<HTMLElement>(".at-site").textContent =
       `${ctx.label}${pp ? ` · périmètre de projet ${pp.surfaceM2.toLocaleString("fr-FR")} m²` : ""}${ctx.radiusM !== null ? ` · rayon ${ctx.radiusM} m` : " · échelle parcelle"}`;

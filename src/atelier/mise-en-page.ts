@@ -388,7 +388,10 @@ function habillagePdf(doc: jsPDF, r: Reglages, g: ReturnType<typeof gabarit>, so
         const px = lx + (k % 2) * (cw / 2);
         const py = ly + Math.floor(k / 2) * pas;
         doc.setFillColor(p.couleur);
-        doc.rect(px, py - 2.4 * f, 3 * f, 2.4 * f, "F");
+        // Liseré gris fin : une pastille blanche (bâti neutre) reste visible.
+        doc.setDrawColor(160, 160, 160);
+        doc.setLineWidth(0.1);
+        doc.rect(px, py - 2.4 * f, 3 * f, 2.4 * f, "FD");
         doc.text(doc.splitTextToSize(p.libelle, cw / 2 - 5 * f)[0], px + 4 * f, py - 0.3 * f);
       });
       ly += Math.ceil(el.pastilles.length / 2) * pas;
@@ -545,6 +548,7 @@ function habillageCanvas(ctx: CanvasRenderingContext2D, r: Reglages, g: ReturnTy
         const px = lx + (k % 2) * (colW / 2);
         const py = ly + Math.floor(k / 2) * pas;
         ctx.fillStyle = p.couleur; ctx.fillRect(px, py - mm(2.4 * f), mm(3 * f), mm(2.4 * f));
+        ctx.strokeStyle = "#a0a0a0"; ctx.lineWidth = Math.max(1, mm(0.1)); ctx.strokeRect(px, py - mm(2.4 * f), mm(3 * f), mm(2.4 * f));
         ctx.fillStyle = "#1d1d1f"; ctx.fillText(tenir(p.libelle, colW / 2 - mm(5 * f)), px + mm(4 * f), py - mm(0.3 * f));
       });
       ly += Math.ceil(el.pastilles.length / 2) * pas;
